@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "types": ["@cloudflare/workers-types", "mocha"],
+    "target": "esnext",
+    "lib": ["esnext"],
+    "alwaysStrict": true,
+    "strict": true,
+    "noEmitOnError": true,
+    "moduleResolution": "node",
+    "outDir": "build",
+    "preserveConstEnums": true,
+    "esModuleInterop": true,
+    "composite": true,
+    "rootDir": "."
+  },
+  "include": ["*.ts"]
+}
