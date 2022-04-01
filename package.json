@@ -7,7 +7,7 @@
     "clean": "rm -rf build *.tsbuildinfo",
     "format": "prettier --write '**/*.{js,css,json,md,ts}'",
     "test": "npx mocha",
-    "lint": "npx eslint *.ts",
+    "lint": "npx eslint src",
     "watch": "rm -rf *.tsbuildinfo && npx tsc --build --watch .",
     "dev": "npm run build && npx miniflare --watch --live-reload --debug --do-persist ./data/ dist/index.mjs"
   },

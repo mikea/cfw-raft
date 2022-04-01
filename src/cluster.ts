@@ -8,52 +8,54 @@ import { StartMember } from "./member";
 import { log } from "./log";
 
 export const clusterConfig = d.struct({
-    nodes: d.number,
+  nodes: d.number,
 });
 type IClusterConfig = d.TypeOf<typeof clusterConfig>;
 
 interface INodeState {
-    id: string;
+  id: string;
 }
 
 interface IClusterState {
-    clusterId: string;
-    nodes: INodeState[]
+  clusterId: string;
+  nodes: INodeState[];
 }
 
 export const StartCluster = endpoint<IClusterConfig, IClusterState>({
-    path: "/start",
+  path: "/start",
 });
 
 export class ClusterActor {
-    constructor(public readonly state: DurableObjectState, private readonly env: Env) {}
+  constructor(public readonly state: DurableObjectState, private readonly env: Env) {}
 
-    private readonly clusterState = cell<IClusterState>(this, "clusterState");
+  private readonly clusterState = cell<IClusterState>(this, "clusterState");
 
-    private readonly start: Handler<typeof StartCluster> = async (request) => {
-        const maybeNodes = await Promise.all(Array.from(Array(request.nodes)).map(() => this.startMember()));
-        for (const node of maybeNodes) {
-            if (node instanceof Error) {
-                // todo: better error handling for start.
-                return node;
-            }
-        }
-        const nodes = maybeNodes as INodeState[];
-        const state = { nodes, clusterId: this.state.id.toString() };
-        log({ state });
-        return this.clusterState.put(state);
-    };
-
-    private async startMember(): Promise<INodeState | Error> {
-        const id = this.env.memberActor.newUniqueId();
-        const result = await call(this.env.memberActor.get(id), StartMember, {});
-        if (result instanceof Error) {
-            return result;
-        }
-        return {id: id.toString()};
+  private readonly start: Handler<typeof StartCluster> = async (request) => {
+    const maybeNodes = await Promise.all(Array.from(Array(request.nodes)).map(() => this.startMember()));
+    for (const node of maybeNodes) {
+      if (node instanceof Error) {
+        // todo: better error handling for start.
+        return node;
+      }
     }
+    const nodes = maybeNodes as INodeState[];
+    const state = { nodes, clusterId: this.state.id.toString() };
+    log({ state });
+    return this.clusterState.put(state);
+  };
 
-    readonly server = new Server<Env>().add(StartCluster, this.start);
+  private async startMember(): Promise<INodeState | Error> {
+    const id = this.env.memberActor.newUniqueId();
+    const result = await call(this.env.memberActor.get(id), StartMember, {});
+    if (result instanceof Error) {
+      return result;
+    }
+    return { id: id.toString() };
+  }
 
-    async fetch(request: Request): Promise<Response> { return this.server.fetch(request, this.env); }
+  readonly server = new Server<Env>().add(StartCluster, this.start);
+
+  async fetch(request: Request): Promise<Response> {
+    return this.server.fetch(request, this.env);
+  }
 }

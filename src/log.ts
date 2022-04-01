@@ -1,3 +1,3 @@
 export function log(...data: unknown[]) {
-    console.log(...data);
+  console.log(...data);
 }

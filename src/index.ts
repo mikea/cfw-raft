@@ -8,28 +8,28 @@ import { Env } from "./env";
 import { call } from "@mikea/cfw-utils/call";
 
 const startResponse = d.struct({
-    clusterId: d.string,
+  clusterId: d.string,
 });
 
 const Start = endpoint({
-    path: "/start",
-    request: clusterConfig,
-    response: startResponse,
+  path: "/start",
+  request: clusterConfig,
+  response: startResponse,
 });
 
 const start: Handler<typeof Start, Env> = async (request, _, env) => {
-    const id = env.clusterActor.newUniqueId();
-    const clusterState = await call(env.clusterActor.get(id), StartCluster, request);
-    if (clusterState instanceof Error) {
-        return clusterState;
-    }
-    return { clusterId: clusterState.clusterId };
+  const id = env.clusterActor.newUniqueId();
+  const clusterState = await call(env.clusterActor.get(id), StartCluster, request);
+  if (clusterState instanceof Error) {
+    return clusterState;
+  }
+  return { clusterId: clusterState.clusterId };
 };
 
 const server = new Server<Env>().add(Start, start);
 
-
 export default {
-    fetch: (request: Request, env: Env) => { return server.fetch(request, env); },
-  };
-   
+  fetch: (request: Request, env: Env) => {
+    return server.fetch(request, env);
+  },
+};
