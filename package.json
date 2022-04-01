@@ -9,7 +9,7 @@
     "test": "npx mocha",
     "lint": "npx eslint *.ts",
     "watch": "rm -rf *.tsbuildinfo && npx tsc --build --watch .",
-    "dev": "npm run build && npx miniflare --live-reload --debug --do-persist ./data/ dist/index.mjs"
+    "dev": "npm run build && npx miniflare --watch --live-reload --debug --do-persist ./data/ dist/index.mjs"
   },
   "repository": {
     "type": "git",
@@ -23,7 +23,7 @@
   "homepage": "https://github.com/mikea/cfw-raft#readme",
   "devDependencies": {
     "@cloudflare/workers-types": "^3.4.0",
-    "@mikea/cfw-utils": "^0.1.0",
+    "@mikea/cfw-utils": "^0.3.0",
     "@types/chai": "^4.3.0",
     "@types/mocha": "^9.1.0",
     "@typescript-eslint/eslint-plugin": "^5.17.0",

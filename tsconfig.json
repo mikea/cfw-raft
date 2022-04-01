@@ -11,7 +11,7 @@
     "preserveConstEnums": true,
     "esModuleInterop": true,
     "composite": true,
-    "rootDir": "."
+    "rootDir": "src"
   },
-  "include": ["*.ts"]
+  "include": ["src/**/*.ts"]
 }

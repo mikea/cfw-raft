@@ -15,8 +15,11 @@ format = "modules"
 main = "./index.mjs"
 
 [durable_objects]
-bindings = [{name = "memberActor", class_name = "MemberActor"}]
+bindings = [
+    {name = "memberActor", class_name = "MemberActor"},
+    {name = "clusterActor", class_name = "ClusterActor"},
+]
 
 [[migrations]]
 tag = "v1"
-new_classes = ["MemberActor"]
+new_classes = ["MemberActor", "ClusterActor"]
