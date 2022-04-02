@@ -1,7 +1,7 @@
 export { MemberActor } from "./member";
 export { ClusterActor } from "./cluster";
 import { endpoint } from "@mikea/cfw-utils/endpoint";
-import { clusterConfig, PingCluster, StartCluster } from "./cluster";
+import { partialClusterConfig, PingCluster, StartCluster } from "./cluster";
 import * as d from "@mikea/cfw-utils/decoder";
 import { Handler, Server } from "@mikea/cfw-utils/server";
 import { Env } from "./env";
@@ -13,7 +13,7 @@ const startResponse = d.struct({
 
 const Start = endpoint({
   path: "/start",
-  request: clusterConfig,
+  request: partialClusterConfig,
   response: startResponse,
 });
 

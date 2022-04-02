@@ -2,23 +2,32 @@ import { Env } from "./env";
 import { Handler, Server } from "@mikea/cfw-utils/server";
 import { endpoint } from "@mikea/cfw-utils/endpoint";
 import { call } from "@mikea/cfw-utils/call";
-import { cell } from "@mikea/cfw-utils/storage";
+import { cell, getFromString } from "@mikea/cfw-utils/storage";
 import * as d from "@mikea/cfw-utils/decoder";
 import { IMemberState, PingMember, StartMember } from "./member";
 import { log } from "./log";
+import { liftError } from "./errors";
 
-export const clusterConfig = d.struct({
+export const partialClusterConfig = d.partial({
   members: d.number,
+  initDelayMs: d.number,
 });
-type IClusterConfig = d.TypeOf<typeof clusterConfig>;
+type IPartialClusterConfig = d.TypeOf<typeof partialClusterConfig>;
+type IClusterConfig = Required<IPartialClusterConfig>;
+
+const defaultClusterConfig: IClusterConfig = {
+  members: 5,
+  initDelayMs: 100,
+};
 
 interface IClusterState {
   id: string;
   members: IMemberState[];
 }
 
-export const StartCluster = endpoint<IClusterConfig, IClusterState>({
+export const StartCluster = endpoint<IPartialClusterConfig, IClusterState>({
   path: "/start_cluster",
+  request: partialClusterConfig,
 });
 
 interface IPingRequest {}
@@ -32,41 +41,45 @@ export class ClusterActor {
   private readonly clusterState = cell<IClusterState>(this, "clusterState");
 
   private readonly start: Handler<typeof StartCluster> = async (request) => {
-    const maybeMembers = await Promise.all(Array.from(Array(request.members)).map(() => this.startMember()));
-    for (const member of maybeMembers) {
-      if (member instanceof Error) {
-        // todo: better error handling for start.
-        return member;
-      }
+    const ids: DurableObjectId[] = [];
+    const config = { ...defaultClusterConfig, ...request };
+    for (let i = 0; i < config.members; i++) {
+      ids.push(this.env.memberActor.newUniqueId());
     }
-    const members = maybeMembers as IMemberState[];
+    const strIds = ids.map((id) => id.toString());
+
+    const members = liftError(
+      await Promise.all(
+        ids.map((id, idx) => {
+          const others = Array.from(strIds);
+          others.splice(idx, 1);
+          return call(this.env.memberActor.get(id), StartMember, { others, initDelayMs: config.initDelayMs });
+        }),
+      ),
+    );
+    if (members instanceof Error) {
+      return members;
+    }
     const state = { members, id: this.state.id.toString() };
-    log({ state });
+    log("cluster start", { state });
     return this.clusterState.put(state);
   };
-
-  private async startMember(): Promise<IMemberState | Error> {
-    return call(this.env.memberActor.get(this.env.memberActor.newUniqueId()), StartMember, {});
-  }
 
   private readonly ping: Handler<typeof PingCluster> = async () => {
     const state = await this.clusterState.get();
     if (!state) return new Error("bad state");
 
-    const maybeMembers = await Promise.all(state.members.map(this.pingNode));
-    for (const member of maybeMembers) {
-      if (member instanceof Error) {
-        return member;
-      }
+    const members = liftError(await Promise.all(
+      state.members.map((member) => {
+        return call(getFromString(this.env.memberActor, member.id), PingMember, {});
+      }),
+    ));
+    if (members instanceof Error) {
+      return members;
     }
-    const members = maybeMembers as IMemberState[];
     const newState = { ...state, members };
     log({ newState });
-    return this.clusterState.put(state);
-  };
-
-  private readonly pingNode = async (member: IMemberState): Promise<IMemberState | Error> => {
-    return call(this.env.memberActor.get(this.env.memberActor.idFromString(member.id)), PingMember, {});
+    return this.clusterState.put(newState);
   };
 
   readonly server = new Server<Env>().add(StartCluster, this.start).add(PingCluster, this.ping);
