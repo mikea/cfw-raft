@@ -2,7 +2,7 @@ import { Env } from "./env";
 import { Handler, Server } from "@mikea/cfw-utils/server";
 import { call } from "@mikea/cfw-utils/call";
 import { endpoint } from "@mikea/cfw-utils/endpoint";
-import { cell, getFromString } from "@mikea/cfw-utils/storage";
+import { cachedCell, getFromString, ICachedCell } from "@mikea/cfw-utils/storage";
 import { IRandom32, newRandom32 } from "@mikea/cfw-utils/random";
 import { log } from "./log";
 import { timeout } from "./promises";
@@ -18,8 +18,6 @@ export interface IMemberState {
   id: string;
   role: Role;
   currentTerm: number;
-  config: IMemberConfig;
-  leader?: string;
   votedFor?: string;
 }
 
@@ -71,18 +69,23 @@ export const Append = endpoint<IAppendRequest, IAppendResponse>({
 export class MemberActor {
   readonly id: string;
   readonly random: IRandom32;
+  readonly memberConfig: ICachedCell<IMemberConfig>;
+  readonly memberState: ICachedCell<IMemberState>;
 
   constructor(public readonly state: DurableObjectState, private readonly env: Env) {
     this.id = this.state.id.toString();
     this.random = newRandom32(toSeed(this.id));
+    this.memberConfig = cachedCell(this.state, "config");
+    this.memberState = cachedCell(this.state, "state");
   }
 
-  readonly memberState = cell<IMemberState>(this, "state");
 
   readonly start: Handler<typeof StartMember> = async (config) => {
-    const initDelay = this.random.randU32() % config.initDelayMs + config.initDelayMs;
+    const initDelay = (this.random.randU32() % config.initDelayMs) + config.initDelayMs;
     log(this.id, "start", { config });
-    const state: IMemberState = { role: "follower", id: this.id, currentTerm: 0, config };
+    await this.memberConfig.put(config);
+
+    const state: IMemberState = { role: "follower", id: this.id, currentTerm: 0 };
     await this.memberState.put(state);
 
     await timeout(initDelay);
@@ -93,53 +96,71 @@ export class MemberActor {
   };
 
   private async maybeStartElection() {
-    const state = await this.memberState.get();
-    if (!state) return new Error("missing state");
-    if (state.leader || state.role !== "follower") return;
+    const config = this.memberConfig.value;
+    if (!config) return new Error("missing config");
+
+    if (!this.memberState.value) return new Error("missing state");
+    let state = this.memberState.value;
+
+    if (state.votedFor || state.role !== "follower") return;
 
     log(this.id, "starting election");
-    state.currentTerm = state.currentTerm + 1;
-    state.votedFor = this.id;
-    state.role = "candidate";
+    const currentTerm = state.currentTerm + 1;
+    state = { ...state, currentTerm, votedFor: this.id, role: "candidate" };
     await this.memberState.put(state);
 
     const voteRequest: IVoteRequest = { term: state.currentTerm, sourceId: this.id };
-    
+
     // todo: election timer
     // todo: wait for majority, not all
-    const responses = liftError(await Promise.all(state.config.others.map((memberId) => call(getFromString(this.env.memberActor, memberId), Vote, voteRequest))));
+    const responses = liftError(
+      await Promise.all(
+        config.others.map((memberId) => call(getFromString(this.env.memberActor, memberId), Vote, voteRequest)),
+      ),
+    );
+    // todo: some errors are OK.
     if (responses instanceof Error) return responses;
+
+    // todo: check current state term
+
     const votes = responses.filter((r) => r.voteGranted && r.term === state.currentTerm).length;
     log(this.id, "got all vote responses", { votes });
 
-    const majority = (state.config.others.length + 1) / 2;
+    const majority = (config.others.length + 1) / 2;
     if (votes >= majority) {
       // todo: re-read state and check it.
-      state.role = "leader";
+      state = { ...state, role: "leader" };
       log(this.id, "got majority", { votes, state });
       await this.memberState.put(state);
-      await this.sendHeartbeats(state);
+      await this.sendHeartbeats(state, config);
     }
   }
 
-  private async sendHeartbeats(state: IMemberState) {
-    const responses = liftError(await Promise.all(state.config.others.map((memberId) => call(getFromString(this.env.memberActor, memberId), Append, {
-      term: state.currentTerm,
-      sourceId: this.id,
-      entries: [],
-    }))));
+  private async sendHeartbeats(state: IMemberState, config: IMemberConfig) {
+    // todo: don't wait for heartbeats to finish
+    const responses = liftError(
+      await Promise.all(
+        config.others.map((memberId) =>
+          call(getFromString(this.env.memberActor, memberId), Append, {
+            term: state.currentTerm,
+            sourceId: this.id,
+            entries: [],
+          }),
+        ),
+      ),
+    );
     return responses;
   }
 
   readonly append: Handler<typeof Append> = async (request) => {
-    const state = await this.memberState.get();
+    if (!this.memberState.value) return new Error("missing state");
+    let state = this.memberState.value;
     log(this.id, "append", { request, state });
-    if (!state) return new Error("missing state");
 
     // drop old request
     if (request.term < state.currentTerm) return { success: false, term: request.term };
 
-    termCatchup(request, state);
+    state = termCatchup(request, state);
 
     // todo: check commits
 
@@ -149,27 +170,27 @@ export class MemberActor {
   };
 
   readonly vote: Handler<typeof Vote> = async (request) => {
-    const state = await this.memberState.get();
-    if (!state) return new Error("state missing");
+    if (!this.memberState.value) return new Error("state missing");
+    let state = this.memberState.value;
     log(this.id, "vote", { request, state });
 
-    termCatchup(request, state);
+    state = termCatchup(request, state);
 
     // todo: check log
     const voteGranted = !state.votedFor || state.votedFor === request.sourceId;
-    
+
     if (voteGranted) {
-      state.votedFor = request.sourceId;
+      state = { ...state, votedFor: request.sourceId };
       log(this.id, "vote granted", { state });
-      await this.memberState.put(state);
     }
 
+    await this.memberState.put(state);
     return { voteGranted, term: state.currentTerm };
   };
 
   readonly ping: Handler<typeof PingMember> = async () => {
-    const state = await this.memberState.get();
-    if (!state) return new Error("state missing");
+    if (!this.memberState.value) return new Error("state missing");
+    const state = this.memberState.value;
     log(this.id, "ping", { state });
     return state;
   };
@@ -180,13 +201,12 @@ export class MemberActor {
     return this.server.fetch(request, this.env);
   }
 }
-function termCatchup(request: { term: number, sourceId: string }, state: IMemberState) {
+function termCatchup(request: { term: number; sourceId: string }, state: IMemberState): IMemberState {
   if (request.term > state.currentTerm) {
-    state.role = "follower";
-    state.currentTerm = request.term;
-    state.votedFor = undefined;
-    state.leader = request.sourceId;
+    return { ...state, role: "follower", currentTerm: request.term, votedFor: request.sourceId };
   }
+
+  return state;
 }
 
 function toSeed(id: string): number {
@@ -198,3 +218,5 @@ function toSeed(id: string): number {
   return seed;
 }
 
+// async function waitForMajority<T>(majority: number, promises: Promise<T>, pred: (t: T) => boolean): Promise<T[]> {
+// }

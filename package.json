@@ -23,7 +23,7 @@
   "homepage": "https://github.com/mikea/cfw-raft#readme",
   "devDependencies": {
     "@cloudflare/workers-types": "^3.4.0",
-    "@mikea/cfw-utils": "^0.7.0",
+    "@mikea/cfw-utils": "^0.8.0",
     "@types/chai": "^4.3.0",
     "@types/mocha": "^9.1.0",
     "@typescript-eslint/eslint-plugin": "^5.17.0",
