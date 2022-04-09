@@ -7,25 +7,13 @@ import { IRandom32, newRandom32 } from "@mikea/cfw-utils/random";
 import { log } from "./log";
 import { timeout } from "./promises";
 import { liftError } from "./errors";
-
-type Role = "follower" | "candidate" | "leader";
-
-export interface IMemberConfig {
-  others: string[];
-  initDelayMs: number;
-}
-export interface IMemberState {
-  id: string;
-  role: Role;
-  currentTerm: number;
-  votedFor?: string;
-}
+import { IMemberConfig, IMemberState, IStateMachine } from "./model";
 
 export const StartMember = endpoint<IMemberConfig, IMemberState>({
   path: "/start_member",
 });
 
-export const PingMember = endpoint<{}, IMemberState>({
+export const PingMember = endpoint<object, IMemberState>({
   path: "/ping_member",
 });
 
@@ -66,23 +54,37 @@ interface IAppendResponse {
 export const Append = endpoint<IAppendRequest, IAppendResponse>({
   path: "/append",
 });
-export class MemberActor {
+
+// todo: doesn't work https://github.com/Microsoft/TypeScript/issues/17293
+// export const CreateMemberActor = <S, A extends object>(stateMachine: IStateMachine<S, A>) => class extends MemberActor<S, A> {
+//   protected stateMachine(): IStateMachine<S, A> {
+//     return stateMachine;
+//   }
+// };
+
+export class MemberActor<S, A extends object> {
   readonly id: string;
   readonly random: IRandom32;
   readonly memberConfig: ICachedCell<IMemberConfig>;
   readonly memberState: ICachedCell<IMemberState>;
+  readonly memberActor: DurableObjectNamespace;
 
   constructor(public readonly state: DurableObjectState, private readonly env: Env) {
     this.id = this.state.id.toString();
     this.random = newRandom32(toSeed(this.id));
     this.memberConfig = cachedCell(this.state, "config");
     this.memberState = cachedCell(this.state, "state");
+    const config = this.config(env);
+    this.memberActor = config.member;
   }
 
+  protected config(_env: Env): { stateMachine: IStateMachine<S, A>; member: DurableObjectNamespace } {
+    throw new Error("not implemented");
+  }
 
   readonly start: Handler<typeof StartMember> = async (config) => {
     const initDelay = (this.random.randU32() % config.initDelayMs) + config.initDelayMs;
-    log(this.id, "start", { config });
+    this.log("start", { config });
     await this.memberConfig.put(config);
 
     const state: IMemberState = { role: "follower", id: this.id, currentTerm: 0 };
@@ -91,7 +93,7 @@ export class MemberActor {
     await timeout(initDelay);
 
     await this.maybeStartElection();
-    log(this.id, "member started");
+    this.log("member started");
     return state;
   };
 
@@ -104,7 +106,7 @@ export class MemberActor {
 
     if (state.votedFor || state.role !== "follower") return;
 
-    log(this.id, "starting election");
+    this.log("starting election");
     const currentTerm = state.currentTerm + 1;
     state = { ...state, currentTerm, votedFor: this.id, role: "candidate" };
     await this.memberState.put(state);
@@ -115,7 +117,7 @@ export class MemberActor {
     // todo: wait for majority, not all
     const responses = liftError(
       await Promise.all(
-        config.others.map((memberId) => call(getFromString(this.env.memberActor, memberId), Vote, voteRequest)),
+        config.others.map((memberId) => call(getFromString(this.memberActor, memberId), Vote, voteRequest)),
       ),
     );
     // todo: some errors are OK.
@@ -124,13 +126,13 @@ export class MemberActor {
     // todo: check current state term
 
     const votes = responses.filter((r) => r.voteGranted && r.term === state.currentTerm).length;
-    log(this.id, "got all vote responses", { votes });
+    this.log("got all vote responses", { votes });
 
     const majority = (config.others.length + 1) / 2;
     if (votes >= majority) {
       // todo: re-read state and check it.
       state = { ...state, role: "leader" };
-      log(this.id, "got majority", { votes, state });
+      this.log("got majority", { votes, state });
       await this.memberState.put(state);
       await this.sendHeartbeats(state, config);
     }
@@ -141,7 +143,7 @@ export class MemberActor {
     const responses = liftError(
       await Promise.all(
         config.others.map((memberId) =>
-          call(getFromString(this.env.memberActor, memberId), Append, {
+          call(getFromString(this.memberActor, memberId), Append, {
             term: state.currentTerm,
             sourceId: this.id,
             entries: [],
@@ -155,7 +157,7 @@ export class MemberActor {
   readonly append: Handler<typeof Append> = async (request) => {
     if (!this.memberState.value) return new Error("missing state");
     let state = this.memberState.value;
-    log(this.id, "append", { request, state });
+    this.log("append", { request, state });
 
     // drop old request
     if (request.term < state.currentTerm) return { success: false, term: request.term };
@@ -164,7 +166,7 @@ export class MemberActor {
 
     // todo: check commits
 
-    log(this.id, "accepted append", { request, state });
+    this.log("accepted append", { request, state });
     await this.memberState.put(state);
     return { success: true, term: state.currentTerm };
   };
@@ -172,7 +174,7 @@ export class MemberActor {
   readonly vote: Handler<typeof Vote> = async (request) => {
     if (!this.memberState.value) return new Error("state missing");
     let state = this.memberState.value;
-    log(this.id, "vote", { request, state });
+    this.log("vote", { request, state });
 
     state = termCatchup(request, state);
 
@@ -181,24 +183,21 @@ export class MemberActor {
 
     if (voteGranted) {
       state = { ...state, votedFor: request.sourceId };
-      log(this.id, "vote granted", { state });
+      this.log("vote granted", { state });
     }
 
     await this.memberState.put(state);
     return { voteGranted, term: state.currentTerm };
   };
 
-  readonly ping: Handler<typeof PingMember> = async () => {
-    if (!this.memberState.value) return new Error("state missing");
-    const state = this.memberState.value;
-    log(this.id, "ping", { state });
-    return state;
-  };
-
   readonly server = new Server<Env>().add(StartMember, this.start).add(Vote, this.vote).add(Append, this.append);
 
   async fetch(request: Request): Promise<Response> {
     return this.server.fetch(request, this.env);
+  }
+
+  private log(...data: unknown[]) {
+    log(this.constructor.name, this.id, ...data);
   }
 }
 function termCatchup(request: { term: number; sourceId: string }, state: IMemberState): IMemberState {

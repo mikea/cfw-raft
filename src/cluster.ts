@@ -3,27 +3,15 @@ import { Handler, Server } from "@mikea/cfw-utils/server";
 import { endpoint } from "@mikea/cfw-utils/endpoint";
 import { call } from "@mikea/cfw-utils/call";
 import { cell, getFromString } from "@mikea/cfw-utils/storage";
-import * as d from "@mikea/cfw-utils/decoder";
-import { IMemberState, PingMember, StartMember } from "./member";
+import { PingMember, StartMember } from "./member";
 import { log } from "./log";
 import { liftError } from "./errors";
-
-export const partialClusterConfig = d.partial({
-  members: d.number,
-  initDelayMs: d.number,
-});
-type IPartialClusterConfig = d.TypeOf<typeof partialClusterConfig>;
-type IClusterConfig = Required<IPartialClusterConfig>;
+import { IClusterConfig, IClusterState, IPartialClusterConfig, partialClusterConfig } from "./model";
 
 const defaultClusterConfig: IClusterConfig = {
   members: 5,
   initDelayMs: 100,
 };
-
-interface IClusterState {
-  id: string;
-  members: IMemberState[];
-}
 
 export const StartCluster = endpoint<IPartialClusterConfig, IClusterState>({
   path: "/start_cluster",
@@ -36,7 +24,18 @@ export const PingCluster = endpoint<IPingRequest, IClusterState>({
 });
 
 export class ClusterActor {
-  constructor(public readonly state: DurableObjectState, private readonly env: Env) {}
+  private readonly memberActor: DurableObjectNamespace;
+  private readonly clusterActor: DurableObjectNamespace;
+
+  constructor(public readonly state: DurableObjectState, private readonly env: Env) {
+    const config = this.config(env);
+    this.memberActor = config.member;
+    this.clusterActor = config.cluster;
+  }
+
+  protected config(_env: Env): { member: DurableObjectNamespace; cluster: DurableObjectNamespace } {
+    throw new Error("not implemented");
+  }
 
   private readonly clusterState = cell<IClusterState>(this, "clusterState");
 
@@ -44,7 +43,7 @@ export class ClusterActor {
     const ids: DurableObjectId[] = [];
     const config = { ...defaultClusterConfig, ...request };
     for (let i = 0; i < config.members; i++) {
-      ids.push(this.env.memberActor.newUniqueId());
+      ids.push(this.memberActor.newUniqueId());
     }
     const strIds = ids.map((id) => id.toString());
 
@@ -53,7 +52,7 @@ export class ClusterActor {
         ids.map((id, idx) => {
           const others = Array.from(strIds);
           others.splice(idx, 1);
-          return call(this.env.memberActor.get(id), StartMember, { others, initDelayMs: config.initDelayMs });
+          return call(this.memberActor.get(id), StartMember, { others, initDelayMs: config.initDelayMs });
         }),
       ),
     );
@@ -69,11 +68,13 @@ export class ClusterActor {
     const state = await this.clusterState.get();
     if (!state) return new Error("bad state");
 
-    const members = liftError(await Promise.all(
-      state.members.map((member) => {
-        return call(getFromString(this.env.memberActor, member.id), PingMember, {});
-      }),
-    ));
+    const members = liftError(
+      await Promise.all(
+        state.members.map((member) => {
+          return call(getFromString(this.memberActor, member.id), PingMember, {});
+        }),
+      ),
+    );
     if (members instanceof Error) {
       return members;
     }

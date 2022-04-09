@@ -1,31 +1,32 @@
-export { MemberActor } from "./member";
-export { ClusterActor } from "./cluster";
+export { CounterCluster, CounterMember } from "./examples/counter";
+
 import { endpoint } from "@mikea/cfw-utils/endpoint";
-import { partialClusterConfig, PingCluster, StartCluster } from "./cluster";
+import { PingCluster, StartCluster } from "./cluster";
 import * as d from "@mikea/cfw-utils/decoder";
 import { Handler, Server } from "@mikea/cfw-utils/server";
 import { Env } from "./env";
 import { call } from "@mikea/cfw-utils/call";
+import { partialClusterConfig } from "./model";
 
 const startResponse = d.struct({
   clusterId: d.string,
 });
 
 const Start = endpoint({
-  path: "/start",
+  path: "/counter/start",
   request: partialClusterConfig,
   response: startResponse,
 });
 
 const Ping = endpoint({
-  path: "/ping",
+  path: "/counter/ping",
   request: d.struct({ clusterId: d.string }),
   response: d.struct({}),
 });
 
 const start: Handler<typeof Start, Env> = async (request, _, env) => {
-  const id = env.clusterActor.newUniqueId();
-  const clusterState = await call(env.clusterActor.get(id), StartCluster, request);
+  const id = env.counterCluster.newUniqueId();
+  const clusterState = await call(env.counterCluster.get(id), StartCluster, request);
   if (clusterState instanceof Error) {
     return clusterState;
   }
@@ -34,7 +35,7 @@ const start: Handler<typeof Start, Env> = async (request, _, env) => {
 
 const ping: Handler<typeof Ping, Env> = async (request, _, env) => {
   const clusterState = await call(
-    env.clusterActor.get(env.clusterActor.idFromString(request.clusterId)),
+    env.counterCluster.get(env.counterCluster.idFromString(request.clusterId)),
     PingCluster,
     {},
   );

@@ -5,7 +5,7 @@
   "scripts": {
     "build": "node build.mjs",
     "clean": "rm -rf build *.tsbuildinfo",
-    "format": "prettier --write '**/*.{js,css,json,md,ts}'",
+    "format": "npx prettier --write '**/*.{js,css,json,md,ts}'",
     "test": "npx mocha",
     "lint": "npx eslint src",
     "watch": "rm -rf *.tsbuildinfo && npx tsc --build --watch .",

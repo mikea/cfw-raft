@@ -16,8 +16,8 @@ main = "./index.mjs"
 
 [durable_objects]
 bindings = [
-    {name = "memberActor", class_name = "MemberActor"},
-    {name = "clusterActor", class_name = "ClusterActor"},
+    {name = "counterMember", class_name = "CounterMember"},
+    {name = "counterCluster", class_name = "CounterCluster"},
 ]
 
 [[migrations]]
