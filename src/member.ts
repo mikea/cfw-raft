@@ -7,7 +7,7 @@ import { IRandom32, newRandom32 } from "@mikea/cfw-utils/random";
 import { log } from "./log";
 import { timeout } from "./promises";
 import { liftError } from "./errors";
-import { IMemberConfig, IMemberState, IStateMachine } from "./model";
+import { IClusterStaticConfig, IMemberConfig, IMemberState } from "./model";
 
 export const StartMember = endpoint<IMemberConfig, IMemberState>({
   path: "/start_member",
@@ -55,31 +55,33 @@ export const Append = endpoint<IAppendRequest, IAppendResponse>({
   path: "/append",
 });
 
-// todo: doesn't work https://github.com/Microsoft/TypeScript/issues/17293
-// export const CreateMemberActor = <S, A extends object>(stateMachine: IStateMachine<S, A>) => class extends MemberActor<S, A> {
-//   protected stateMachine(): IStateMachine<S, A> {
-//     return stateMachine;
-//   }
-// };
+export const CreateMemberActor = <S, A extends object>(staticConfig: IClusterStaticConfig<S, A>) => {
+  return class {
+    public readonly fetch: (request: Request) => Promise<Response>;
+    constructor(state: DurableObjectState, env: Env) {
+      const impl = new MemberActor<S, A>(state, env, staticConfig);
+      this.fetch = (request) => impl.fetch(request);
+    }
+  };
+};
 
-export class MemberActor<S, A extends object> {
+class MemberActor<S, A extends object> {
   readonly id: string;
   readonly random: IRandom32;
   readonly memberConfig: ICachedCell<IMemberConfig>;
   readonly memberState: ICachedCell<IMemberState>;
   readonly memberActor: DurableObjectNamespace;
 
-  constructor(public readonly state: DurableObjectState, private readonly env: Env) {
+  constructor(
+    public readonly state: DurableObjectState,
+    private readonly env: Env,
+    private readonly staticConfig: IClusterStaticConfig<S, A>,
+  ) {
     this.id = this.state.id.toString();
     this.random = newRandom32(toSeed(this.id));
     this.memberConfig = cachedCell(this.state, "config");
     this.memberState = cachedCell(this.state, "state");
-    const config = this.config(env);
-    this.memberActor = config.member;
-  }
-
-  protected config(_env: Env): { stateMachine: IStateMachine<S, A>; member: DurableObjectNamespace } {
-    throw new Error("not implemented");
+    this.memberActor = env[staticConfig.memberActor];
   }
 
   readonly start: Handler<typeof StartMember> = async (config) => {

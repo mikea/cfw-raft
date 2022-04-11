@@ -1,7 +1,6 @@
-import { ClusterActor } from "../cluster";
-import { MemberActor } from "../member";
-import { IStateMachine } from "../model";
-import { Env } from "../env";
+import { CreateClusterActor } from "../cluster";
+import { IClusterStaticConfig, IStateMachine } from "../model";
+import { CreateMemberActor } from "../member";
 
 interface State {
   count: number;
@@ -19,17 +18,11 @@ const stateMachine: IStateMachine<State, Action> = {
   },
 };
 
-// todo: doesn't work;
-// export const CounterMember = CreateMemberActor(stateMachine);
+const staticConfig: IClusterStaticConfig<State, Action> = {
+  stateMachine,
+  memberActor: "counterMember",
+  clusterActor: "counterCluster",
+};
 
-export class CounterMember extends MemberActor<State, Action> {
-  protected override config(env: Env) {
-    return { stateMachine, member: env.counterMember };
-  }
-}
-
-export class CounterCluster extends ClusterActor {
-  protected override config(env: Env) {
-    return { member: env.counterMember, cluster: env.counterCluster };
-  }
-}
+export const CounterMember = CreateMemberActor(staticConfig);
+export const CounterCluster = CreateClusterActor(staticConfig);

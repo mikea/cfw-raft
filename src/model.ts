@@ -1,4 +1,5 @@
 import * as d from "@mikea/cfw-utils/decoder";
+import { Env } from "./env";
 
 export const partialClusterConfig = d.partial({
   members: d.number,
@@ -15,6 +16,11 @@ export interface IClusterState {
 export interface IStateMachine<S, A extends object> {
   initial: S;
   reduce(state: S, action: A): S;
+}
+export interface IClusterStaticConfig<S, A extends object> {
+  stateMachine: IStateMachine<S, A>;
+  memberActor: keyof Env;
+  clusterActor: keyof Env;
 }
 
 type Role = "follower" | "candidate" | "leader";

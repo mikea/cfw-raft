@@ -6,7 +6,23 @@ import { cell, getFromString } from "@mikea/cfw-utils/storage";
 import { PingMember, StartMember } from "./member";
 import { log } from "./log";
 import { liftError } from "./errors";
-import { IClusterConfig, IClusterState, IPartialClusterConfig, partialClusterConfig } from "./model";
+import {
+  IClusterConfig,
+  IClusterState,
+  IClusterStaticConfig,
+  IPartialClusterConfig,
+  partialClusterConfig,
+} from "./model";
+
+export const CreateClusterActor = <S, A extends object>(staticConfig: IClusterStaticConfig<S, A>) => {
+  return class {
+    public readonly fetch: (request: Request) => Promise<Response>;
+    constructor(state: DurableObjectState, env: Env) {
+      const impl = new ClusterActor<S, A>(state, env, staticConfig);
+      this.fetch = (request) => impl.fetch(request);
+    }
+  };
+};
 
 const defaultClusterConfig: IClusterConfig = {
   members: 5,
@@ -23,18 +39,15 @@ export const PingCluster = endpoint<IPingRequest, IClusterState>({
   path: "/ping_cluster",
 });
 
-export class ClusterActor {
+class ClusterActor<S, A extends object> {
   private readonly memberActor: DurableObjectNamespace;
-  private readonly clusterActor: DurableObjectNamespace;
 
-  constructor(public readonly state: DurableObjectState, private readonly env: Env) {
-    const config = this.config(env);
-    this.memberActor = config.member;
-    this.clusterActor = config.cluster;
-  }
-
-  protected config(_env: Env): { member: DurableObjectNamespace; cluster: DurableObjectNamespace } {
-    throw new Error("not implemented");
+  constructor(
+    public readonly state: DurableObjectState,
+    private readonly env: Env,
+    private readonly staticConfig: IClusterStaticConfig<S, A>,
+  ) {
+    this.memberActor = env[staticConfig.memberActor];
   }
 
   private readonly clusterState = cell<IClusterState>(this, "clusterState");
