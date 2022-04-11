@@ -20,10 +20,8 @@ export const PingMember = endpoint<object, IMemberState>({
 interface IVoteRequest {
   term: number;
   sourceId: string;
-
-  // todo
-  // lastLogIndex: number
-  // lastLogTerm: number
+  lastLogIndex: number;
+  lastLogTerm: number;
 }
 
 interface IVoteResponse {
@@ -84,12 +82,12 @@ class MemberActor<S, A extends object> {
     this.memberActor = env[staticConfig.memberActor];
   }
 
-  readonly start: Handler<typeof StartMember> = async (config) => {
+  readonly onStart: Handler<typeof StartMember> = async (config) => {
     const initDelay = (this.random.randU32() % config.initDelayMs) + config.initDelayMs;
     this.log("start", { config });
     await this.memberConfig.put(config);
 
-    const state: IMemberState = { role: "follower", id: this.id, currentTerm: 0 };
+    const state: IMemberState = { role: "follower", id: this.id, currentTerm: 0, lastLogIndex: 0, lastLogTerm: 0 };
     await this.memberState.put(state);
 
     await timeout(initDelay);
@@ -113,7 +111,12 @@ class MemberActor<S, A extends object> {
     state = { ...state, currentTerm, votedFor: this.id, role: "candidate" };
     await this.memberState.put(state);
 
-    const voteRequest: IVoteRequest = { term: state.currentTerm, sourceId: this.id };
+    const voteRequest: IVoteRequest = {
+      term: state.currentTerm,
+      sourceId: this.id,
+      lastLogIndex: state.lastLogIndex,
+      lastLogTerm: state.lastLogTerm,
+    };
 
     // todo: election timer
     // todo: wait for majority, not all
@@ -156,7 +159,7 @@ class MemberActor<S, A extends object> {
     return responses;
   }
 
-  readonly append: Handler<typeof Append> = async (request) => {
+  readonly onAppend: Handler<typeof Append> = async (request) => {
     if (!this.memberState.value) return new Error("missing state");
     let state = this.memberState.value;
     this.log("append", { request, state });
@@ -173,15 +176,17 @@ class MemberActor<S, A extends object> {
     return { success: true, term: state.currentTerm };
   };
 
-  readonly vote: Handler<typeof Vote> = async (request) => {
+  readonly onVote: Handler<typeof Vote> = async (request) => {
     if (!this.memberState.value) return new Error("state missing");
     let state = this.memberState.value;
     this.log("vote", { request, state });
 
     state = termCatchup(request, state);
 
-    // todo: check log
-    const voteGranted = !state.votedFor || state.votedFor === request.sourceId;
+    const logOk =
+      request.lastLogTerm > state.lastLogTerm ||
+      (request.lastLogTerm === state.lastLogTerm && request.lastLogIndex >= state.lastLogIndex);
+    const voteGranted = logOk && (!state.votedFor || state.votedFor === request.sourceId);
 
     if (voteGranted) {
       state = { ...state, votedFor: request.sourceId };
@@ -192,7 +197,7 @@ class MemberActor<S, A extends object> {
     return { voteGranted, term: state.currentTerm };
   };
 
-  readonly server = new Server<Env>().add(StartMember, this.start).add(Vote, this.vote).add(Append, this.append);
+  readonly server = new Server<Env>().add(StartMember, this.onStart).add(Vote, this.onVote).add(Append, this.onAppend);
 
   async fetch(request: Request): Promise<Response> {
     return this.server.fetch(request, this.env);

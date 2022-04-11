@@ -35,4 +35,6 @@ export interface IMemberState {
   role: Role;
   currentTerm: number;
   votedFor?: string;
+  lastLogTerm: number;
+  lastLogIndex: number;
 }
