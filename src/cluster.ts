@@ -72,7 +72,7 @@ class ClusterActor<S, A extends object> {
     if (members instanceof Error) {
       return members;
     }
-    const state = { members, id: this.state.id.toString() };
+    const state = { members: members.map(m => m.id), id: this.state.id.toString() };
     log("cluster start", { state });
     return this.clusterState.put(state);
   };
@@ -84,16 +84,14 @@ class ClusterActor<S, A extends object> {
     const members = liftError(
       await Promise.all(
         state.members.map((member) => {
-          return call(getFromString(this.memberActor, member.id), PingMember, {});
+          return call(getFromString(this.memberActor, member), PingMember, {});
         }),
       ),
     );
     if (members instanceof Error) {
       return members;
     }
-    const newState = { ...state, members };
-    log({ newState });
-    return this.clusterState.put(newState);
+    return state;
   };
 
   readonly server = new Server<Env>().add(StartCluster, this.start).add(PingCluster, this.ping);

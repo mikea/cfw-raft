@@ -10,7 +10,7 @@ export type IClusterConfig = Required<IPartialClusterConfig>;
 
 export interface IClusterState {
   id: string;
-  members: IMemberState[];
+  members: string[];
 }
 
 export interface IStateMachine<S, A extends object> {
@@ -30,11 +30,31 @@ export interface IMemberConfig {
   initDelayMs: number;
 }
 
-export interface IMemberState {
+export interface ILogEntry<A extends object> {
+  action: A;
+  term: number;
+  index: number;
+}
+
+export interface IMemberState<S, A extends object> {
   id: string;
   role: Role;
   currentTerm: number;
   votedFor?: string;
-  lastLogTerm: number;
-  lastLogIndex: number;
+
+  log: Array<ILogEntry<A>>;
+  state: S;
+
+  // todo: these 2 are volatile
+  commitIndex: number;
+  lastApplied: number;
+  // only on leader
+  // todo: volatile
+  syncState: Record<string, ISyncState>;
+}
+
+
+export interface ISyncState {
+  nextIndex: number;
+  matchIndex: number;
 }

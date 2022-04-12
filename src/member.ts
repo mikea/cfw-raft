@@ -7,13 +7,13 @@ import { IRandom32, newRandom32 } from "@mikea/cfw-utils/random";
 import { log } from "./log";
 import { timeout } from "./promises";
 import { liftError } from "./errors";
-import { IClusterStaticConfig, IMemberConfig, IMemberState } from "./model";
+import { IClusterStaticConfig, ILogEntry, IMemberConfig, IMemberState, ISyncState } from "./model";
 
-export const StartMember = endpoint<IMemberConfig, IMemberState>({
+export const StartMember = endpoint<IMemberConfig, IMemberState<unknown, object>>({
   path: "/start_member",
 });
 
-export const PingMember = endpoint<object, IMemberState>({
+export const PingMember = endpoint<object, IMemberState<unknown, object>>({
   path: "/ping_member",
 });
 
@@ -33,23 +33,25 @@ export const Vote = endpoint<IVoteRequest, IVoteResponse>({
   path: "/vote",
 });
 
-interface IAppendRequest {
+interface IAppendRequest<A extends object> {
   term: number;
   sourceId: string;
 
-  entries: [];
-  // todo
-  // prevLogIndex: number;
-  // prevLogTerm: number;
-  // leaderCommit: number;
+  entries: ILogEntry<A>[];
+  prevLogIndex: number;
+  prevLogTerm: number;
+  leaderCommit: number;
 }
 
-interface IAppendResponse {
+export type IAppendResponse = {
+  success: false;
+} | {
   term: number;
-  success: boolean;
+  matchIndex: number;
+  success: true;
 }
 
-export const Append = endpoint<IAppendRequest, IAppendResponse>({
+export const Append = endpoint<IAppendRequest<object>, IAppendResponse>({
   path: "/append",
 });
 
@@ -67,7 +69,7 @@ class MemberActor<S, A extends object> {
   readonly id: string;
   readonly random: IRandom32;
   readonly memberConfig: ICachedCell<IMemberConfig>;
-  readonly memberState: ICachedCell<IMemberState>;
+  readonly memberState: ICachedCell<IMemberState<S, A>>;
   readonly memberActor: DurableObjectNamespace;
 
   constructor(
@@ -87,7 +89,17 @@ class MemberActor<S, A extends object> {
     this.log("start", { config });
     await this.memberConfig.put(config);
 
-    const state: IMemberState = { role: "follower", id: this.id, currentTerm: 0, lastLogIndex: 0, lastLogTerm: 0 };
+    const state: IMemberState<S, A> = {
+      role: "follower",
+      id: this.id,
+      currentTerm: 0,
+      log: [],
+      state: this.staticConfig.stateMachine.initial,
+
+      commitIndex: -1,
+      lastApplied: -1,
+      syncState: {},
+    };
     await this.memberState.put(state);
 
     await timeout(initDelay);
@@ -111,11 +123,16 @@ class MemberActor<S, A extends object> {
     state = { ...state, currentTerm, votedFor: this.id, role: "candidate" };
     await this.memberState.put(state);
 
+    const lastLogEntry = last(state.log);
+    // todo: replace -1 with 0?
+    const lastLogTerm = lastLogEntry ? lastLogEntry.term : -1;
+    const lastLogIndex = lastLogEntry ? lastLogEntry.index : -1;
+
     const voteRequest: IVoteRequest = {
       term: state.currentTerm,
       sourceId: this.id,
-      lastLogIndex: state.lastLogIndex,
-      lastLogTerm: state.lastLogTerm,
+      lastLogIndex: lastLogIndex,
+      lastLogTerm: lastLogTerm,
     };
 
     // todo: election timer
@@ -135,24 +152,30 @@ class MemberActor<S, A extends object> {
 
     const majority = (config.others.length + 1) / 2;
     if (votes >= majority) {
+      const syncState:Record<string, ISyncState> = {};
+      for (const memberId of config.others) {
+        syncState[memberId] = {
+          nextIndex: lastLogIndex + 1,
+          matchIndex: 0,
+        };
+      }
       // todo: re-read state and check it.
-      state = { ...state, role: "leader" };
+      state = { ...state, role: "leader", syncState };
       this.log("got majority", { votes, state });
       await this.memberState.put(state);
       await this.sendHeartbeats(state, config);
     }
+
+    // todo: retry
   }
 
-  private async sendHeartbeats(state: IMemberState, config: IMemberConfig) {
-    // todo: don't wait for heartbeats to finish
+  private async sendHeartbeats(state: IMemberState<S,A>, config: IMemberConfig) {
+    // todo: don't wait for all heartbeats to finish
     const responses = liftError(
       await Promise.all(
-        config.others.map((memberId) =>
-          call(getFromString(this.memberActor, memberId), Append, {
-            term: state.currentTerm,
-            sourceId: this.id,
-            entries: [],
-          }),
+        config.others.map((memberId) => {
+          return this.sendAppend(state, memberId);
+        }
         ),
       ),
     );
@@ -167,13 +190,25 @@ class MemberActor<S, A extends object> {
     // drop old request
     if (request.term < state.currentTerm) return { success: false, term: request.term };
 
+    const prevLogI = state.log.findIndex(e => e.index == request.prevLogIndex);
+    const prevLogEntry = prevLogI >= 0 ? state.log[prevLogI] : undefined;
+    const logOk = (request.prevLogIndex === -1) ||
+      // we need to have an entry corresponding to the prevLogIndex.
+      (prevLogEntry && request.prevLogTerm === prevLogEntry.term);
+    if (!logOk) return { success: false, term: request.term };
+
     state = termCatchup(request, state);
 
-    // todo: check commits
+    const newLog = [...state.log];
+    newLog.splice(prevLogI);
+    newLog.push(...(request.entries as ILogEntry<A>[]));
 
-    this.log("accepted append", { request, state });
+    state = { ...state, log: newLog, commitIndex: request.leaderCommit };
+
     await this.memberState.put(state);
-    return { success: true, term: state.currentTerm };
+    const response: IAppendResponse = { success: true, term: state.currentTerm, matchIndex: last(newLog) ? last(newLog)!.index : -1 };
+    this.log("accepted append", { request, response, state });
+    return response;
   };
 
   readonly onVote: Handler<typeof Vote> = async (request) => {
@@ -183,9 +218,12 @@ class MemberActor<S, A extends object> {
 
     state = termCatchup(request, state);
 
+    const lastLogEntry = state.log.length > 0 ? state.log[state.log.length - 1] : undefined;
+    const lastLogTerm = lastLogEntry ? lastLogEntry.term : -1;
+    const lastLogIndex = lastLogEntry ? lastLogEntry.index : -1;
     const logOk =
-      request.lastLogTerm > state.lastLogTerm ||
-      (request.lastLogTerm === state.lastLogTerm && request.lastLogIndex >= state.lastLogIndex);
+      request.lastLogTerm > lastLogTerm ||
+      (request.lastLogTerm === lastLogTerm && request.lastLogIndex >= lastLogIndex);
     const voteGranted = logOk && (!state.votedFor || state.votedFor === request.sourceId);
 
     if (voteGranted) {
@@ -199,6 +237,33 @@ class MemberActor<S, A extends object> {
 
   readonly server = new Server<Env>().add(StartMember, this.onStart).add(Vote, this.onVote).add(Append, this.onAppend);
 
+  private async sendAppend(state: IMemberState<S, A>, memberId: string) {
+    const syncState = state.syncState[memberId]!;
+
+    const prevLogIndex = syncState.nextIndex - 1;
+    const prevLogTerm = prevLogIndex >= 0 ? state.log.find(e => e.index === prevLogIndex)!.term : -1;
+
+    const response = await call(getFromString(this.memberActor, memberId), Append, {
+      term: state.currentTerm,
+      sourceId: this.id,
+      prevLogIndex,
+      prevLogTerm,
+      leaderCommit: state.commitIndex,
+      entries: state.log.filter(e => e.index > prevLogIndex),
+    });
+
+    if (response instanceof Error) return response;
+
+    if (response.success) {
+      syncState.matchIndex = response.matchIndex;
+      syncState.nextIndex = response.matchIndex + 1;
+    }
+
+    // todo: handle false response
+
+    return response.success;
+  }
+
   async fetch(request: Request): Promise<Response> {
     return this.server.fetch(request, this.env);
   }
@@ -207,12 +272,17 @@ class MemberActor<S, A extends object> {
     log(this.constructor.name, this.id, ...data);
   }
 }
-function termCatchup(request: { term: number; sourceId: string }, state: IMemberState): IMemberState {
+
+function termCatchup<S, A extends object>(request: { term: number; sourceId: string }, state: IMemberState<S,A>): IMemberState<S,A> {
   if (request.term > state.currentTerm) {
-    return { ...state, role: "follower", currentTerm: request.term, votedFor: request.sourceId };
+    return { ...state, role: "follower", currentTerm: request.term, votedFor: request.sourceId, syncState: {} };
   }
 
   return state;
+}
+
+function last<T>(arr: T[]): T | undefined {
+  return arr.length > 0 ? arr[arr.length - 1] : undefined;
 }
 
 function toSeed(id: string): number {
