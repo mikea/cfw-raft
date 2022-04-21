@@ -2,8 +2,7 @@ import { Env } from "./env";
 import { Handler, Server } from "@mikea/cfw-utils/server";
 import { endpoint } from "@mikea/cfw-utils/endpoint";
 import { call } from "@mikea/cfw-utils/call";
-import { cell, getFromString } from "@mikea/cfw-utils/storage";
-import { PingMember, StartMember } from "./member";
+import { cell } from "@mikea/cfw-utils/storage";
 import { log } from "./log";
 import { liftError } from "./errors";
 import {
@@ -13,6 +12,7 @@ import {
   IPartialClusterConfig,
   partialClusterConfig,
 } from "./model";
+import { Event } from "./messages";
 
 export const CreateClusterActor = <S, A extends object>(staticConfig: IClusterStaticConfig<S, A>) => {
   return class {
@@ -26,7 +26,7 @@ export const CreateClusterActor = <S, A extends object>(staticConfig: IClusterSt
 
 const defaultClusterConfig: IClusterConfig = {
   members: 5,
-  initDelayMs: 100,
+  electionDelayMs: 1000,
 };
 
 export const StartCluster = endpoint<IPartialClusterConfig, IClusterState>({
@@ -65,14 +65,17 @@ class ClusterActor<S, A extends object> {
         ids.map((id, idx) => {
           const others = Array.from(strIds);
           others.splice(idx, 1);
-          return call(this.memberActor.get(id), StartMember, { others, initDelayMs: config.initDelayMs });
+          return call(this.memberActor.get(id), Event, {
+            type: "startRequest",
+            config: { others, electionDelayMs: config.electionDelayMs },
+          });
         }),
       ),
     );
     if (members instanceof Error) {
       return members;
     }
-    const state = { members: members.map(m => m.id), id: this.state.id.toString() };
+    const state = { members:strIds, id: this.state.id.toString() };
     log("cluster start", { state });
     return this.clusterState.put(state);
   };
@@ -81,16 +84,16 @@ class ClusterActor<S, A extends object> {
     const state = await this.clusterState.get();
     if (!state) return new Error("bad state");
 
-    const members = liftError(
-      await Promise.all(
-        state.members.map((member) => {
-          return call(getFromString(this.memberActor, member), PingMember, {});
-        }),
-      ),
-    );
-    if (members instanceof Error) {
-      return members;
-    }
+    // const members = liftError(
+    //   await Promise.all(
+    //     state.members.map((member) => {
+    //       return call(getFromString(this.memberActor, member), Event, {});
+    //     }),
+    //   ),
+    // );
+    // if (members instanceof Error) {
+    //   return members;
+    // }
     return state;
   };
 

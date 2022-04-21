@@ -28,6 +28,7 @@
     "@types/mocha": "^9.1.0",
     "@typescript-eslint/eslint-plugin": "^5.17.0",
     "@typescript-eslint/parser": "^5.17.0",
+    "@xstate/cli": "^0.1.6",
     "@xstate/inspect": "^0.6.5",
     "chai": "^4.3.6",
     "esbuild": "^0.14.29",

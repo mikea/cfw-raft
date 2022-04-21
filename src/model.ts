@@ -3,7 +3,7 @@ import { Env } from "./env";
 
 export const partialClusterConfig = d.partial({
   members: d.number,
-  initDelayMs: d.number,
+  electionDelayMs: d.number,
 });
 export type IPartialClusterConfig = d.TypeOf<typeof partialClusterConfig>;
 export type IClusterConfig = Required<IPartialClusterConfig>;
@@ -23,11 +23,9 @@ export interface IClusterStaticConfig<S, A extends object> {
   clusterActor: keyof Env;
 }
 
-type Role = "follower" | "candidate" | "leader";
-
 export interface IMemberConfig {
   others: string[];
-  initDelayMs: number;
+  electionDelayMs: number;
 }
 
 export interface ILogEntry<A extends object> {
@@ -37,8 +35,6 @@ export interface ILogEntry<A extends object> {
 }
 
 export interface IMemberState<S, A extends object> {
-  id: string;
-  role: Role;
   currentTerm: number;
   votedFor?: string;
 
