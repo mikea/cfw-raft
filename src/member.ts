@@ -49,38 +49,6 @@ export const CreateMemberActor = <S, A extends object>(staticConfig: IClusterSta
 };
 
 
-//     const majority = (config.others.length + 1) / 2;
-//     if (votes >= majority) {
-//       const syncState:Record<string, ISyncState> = {};
-//       for (const memberId of config.others) {
-//         syncState[memberId] = {
-//           nextIndex: lastLogIndex + 1,
-//           matchIndex: 0,
-//         };
-//       }
-//       // todo: re-read state and check it.
-//       state = { ...state, role: "leader", syncState };
-//       this.log("got majority", { votes, state });
-//       await this.memberState.put(state);
-//       await this.sendHeartbeats(state, config);
-//     }
-
-//     // todo: retry
-//   }
-
-//   private async sendHeartbeats(state: IMemberState<S,A>, config: IMemberConfig) {
-//     // todo: don't wait for all heartbeats to finish
-//     const responses = liftError(
-//       await Promise.all(
-//         config.others.map((memberId) => {
-//           return this.sendAppend(state, memberId);
-//         }
-//         ),
-//       ),
-//     );
-//     return responses;
-//   }
-
 //   readonly onAppend: Handler<typeof Append> = async (request) => {
 //     if (!this.memberState.value) return new Error("missing state");
 //     let state = this.memberState.value;
@@ -110,22 +78,6 @@ export const CreateMemberActor = <S, A extends object>(staticConfig: IClusterSta
 //     return response;
 //   };
 
-//   readonly onVote: Handler<typeof Vote> = async (request) => {
-//     if (!this.memberState.value) return new Error("state missing");
-//     let state = this.memberState.value;
-//     this.log("vote", { request, state });
-
-//     if (voteGranted) {
-//       state = { ...state, votedFor: request.sourceId };
-//       this.log("vote granted", { state });
-//     }
-
-//     await this.memberState.put(state);
-//     return { voteGranted, term: state.currentTerm };
-//   };
-
-//   readonly server = new Server<Env>().add(StartMember, this.onStart).add(Vote, this.onVote).add(Append, this.onAppend);
-
 //   private async sendAppend(state: IMemberState<S, A>, memberId: string) {
 //     const syncState = state.syncState[memberId]!;
 
@@ -153,15 +105,6 @@ export const CreateMemberActor = <S, A extends object>(staticConfig: IClusterSta
 //     return response.success;
 //   }
 
-//   async fetch(request: Request): Promise<Response> {
-//     return this.server.fetch(request, this.env);
-//   }
-
-//   private log(...data: unknown[]) {
-//     log(this.constructor.name, this.id, ...data);
-//   }
-// }
-
 // function termCatchup<S, A extends object>(request: { term: number; sourceId: string }, state: IMemberState<S,A>): IMemberState<S,A> {
 //   if (request.term > state.currentTerm) {
 //     return { ...state, role: "follower", currentTerm: request.term, votedFor: request.sourceId, syncState: {} };
@@ -169,16 +112,3 @@ export const CreateMemberActor = <S, A extends object>(staticConfig: IClusterSta
 
 //   return state;
 // }
-
-
-// function toSeed(id: string): number {
-//   let seed = Date.now();
-//   while (id.length > 0) {
-//     seed += Number.parseInt(id.substring(0, 8), 16);
-//     id = id.substring(8);
-//   }
-//   return seed;
-// }
-
-// // async function waitForMajority<T>(majority: number, promises: Promise<T>, pred: (t: T) => boolean): Promise<T[]> {
-// // }

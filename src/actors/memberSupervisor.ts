@@ -2,53 +2,53 @@ import { getFromString } from "@mikea/cfw-utils/storage";
 import { ActorRef, assign, createMachine, EventObject, spawn } from "xstate";
 import { log, send } from "xstate/lib/actions";
 import { Env } from "../env";
-import { SupervisorEvent } from "../messages";
+import { MemberRequest, StartRequest } from "../messages";
 import { IClusterStaticConfig, IMemberConfig, IMemberState } from "../model";
 import { sendTo } from "../utils";
 import { MemberEvent, memberMachine } from "./member";
 import { siblingMachine } from "./sibling";
 
-export type SupervisorContext = {
+export type SupervisorContext<A> = {
   env: Env;
   doState: DurableObjectState;
 
   startOrigin?: string;
 
   staticConfig: IClusterStaticConfig<any, object>;
-  member?: ActorRef<MemberEvent>;
-  siblings?: ActorRef<any>[];
+  member?: ActorRef<MemberEvent<A>>;
+  siblings?: Array<{ id: string; ref: ActorRef<any> }>;
   config?: IMemberConfig;
   state?: IMemberState<any, object>;
   lastRequest?: ActorRef<any>;
 };
 
 const askMachine = createMachine<{
-  from: string,
-  to: ActorRef<any>,
-  msg: EventObject
+  from: string;
+  to: ActorRef<any>;
+  msg: EventObject;
 }>({
   initial: "send",
   states: {
     send: {
-      entry: send((ctx) => ctx.msg, { to: (ctx) => ctx.to }),
+      entry: [send((ctx) => ctx.msg, { to: (ctx) => ctx.to })],
       on: {
         "*": {
-          actions: send((ctx, event) => event, { to: (ctx) => ctx.from }),
+          actions: [send((ctx, event) => event, { to: (ctx) => ctx.from })],
           target: "done",
-        }
+        },
       },
     },
     done: {
-      type: "final"
-    }
-  }
+      type: "final",
+    },
+  },
 });
 
 /*
 
                 */
 
-export const memberSupervisor = createMachine<SupervisorContext, SupervisorEvent>(
+export const memberSupervisor = createMachine<SupervisorContext<any>, StartRequest | MemberRequest<any>>(
   {
     id: "memberSupervisor",
     initial: "not_initialized",
@@ -84,13 +84,14 @@ export const memberSupervisor = createMachine<SupervisorContext, SupervisorEvent
       startSiblings: {
         entry: assign({
           siblings: (ctx) =>
-            ctx.config?.others.map((memberId) =>
-              spawn(
+            ctx.config!.others.map((memberId) => ({
+              ref: spawn(
                 siblingMachine.withContext({
                   stub: getFromString(ctx.env[ctx.staticConfig.memberActor], memberId),
                 }),
               ),
-            ),
+              id: memberId,
+            })),
         }),
         always: {
           target: "startMember",
@@ -109,6 +110,9 @@ export const memberSupervisor = createMachine<SupervisorContext, SupervisorEvent
                 siblings: ctx.siblings!,
                 state: ctx.state!,
                 votesCollected: 0,
+                commitIndex: -1,
+                lastApplied: -1,
+                syncState: {},
               }),
             );
           },
@@ -119,25 +123,24 @@ export const memberSupervisor = createMachine<SupervisorContext, SupervisorEvent
       },
       running: {
         entry: send({ type: "startResponse", success: true }, { to: (ctx) => ctx.startOrigin! }),
+
+        on: {
+          voteRequest: { actions: "forwardToMember" },
+          appendRequest: { actions: "forwardToMember" },
+        },
       },
     },
-    on: {
-      "*": {
-        actions: assign({
-          lastRequest: (ctx, msg, meta) => spawn(askMachine.withContext({
-            from: meta._event.origin!,
-            to: ctx.member!,
-            msg,
-          })),
-        })
-      }
-    }
   },
   {
-    actions: {},
+    actions: {
+      forwardToMember: assign({
+        lastRequest: (ctx, msg, meta) =>
+          spawn(askMachine.withContext({ from: meta._event.origin!, to: ctx.member!, msg })),
+      }),
+    },
     services: {
       putConfig: (context) => context.doState.storage.put("config", context.config),
       putState: (context) => context.doState.storage.put("state", context.state),
-    }
+    },
   },
 );

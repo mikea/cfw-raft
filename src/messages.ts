@@ -1,5 +1,5 @@
 import { endpoint } from "@mikea/cfw-utils/endpoint";
-import { IMemberConfig } from "./model";
+import { ILogEntry, IMemberConfig } from "./model";
 
 interface IMessageBase {
   // id of the sender
@@ -8,7 +8,6 @@ interface IMessageBase {
   // sender's current term
   srcTerm: number;
 }
-
 
 export interface IVoteRequest extends IMessageBase {
   type: "voteRequest";
@@ -21,36 +20,35 @@ export interface IVoteResponse extends IMessageBase {
   voteGranted: boolean;
 }
 
+export interface IAppendRequest<A> extends IMessageBase {
+  type: "appendRequest";
 
-// interface IAppendRequest<A extends object> {
-//   term: number;
-//   sourceId: string;
+  entries: ILogEntry<A>[];
+  prevLogIndex: number;
+  prevLogTerm: number;
+  leaderCommit: number;
+}
 
-//   entries: ILogEntry<A>[];
-//   prevLogIndex: number;
-//   prevLogTerm: number;
-//   leaderCommit: number;
-// }
+export type IAppendResponse = {
+  type: "appendResponse";
+} & IMessageBase &
+  (
+    | {
+        success: false;
+      }
+    | {
+        term: number;
+        matchIndex: number;
+        success: true;
+      }
+  );
 
-// export type IAppendResponse = {
-//   success: false;
-// } | {
-//   term: number;
-//   matchIndex: number;
-//   success: true;
-// }
+export type MemberRequest<A> = IVoteRequest | IAppendRequest<A>;
+export type MemberResponse = IVoteResponse | IAppendResponse;
 
-export type MemberRequest = IVoteRequest;
-export type MemberResponse = IVoteResponse;
+export type StartRequest = { type: "startRequest"; config: IMemberConfig };
+export type StartResponse = { type: "startResponse"; success: boolean };
 
-export type SupervisorEvent =
-  | { type: "startRequest"; config: IMemberConfig }
-  | { type: "startResponse"; success: boolean}
-  | MemberRequest;
-
-export type IEventRequest = SupervisorEvent;
-export type IEventResponse = true;
-
-export const Event = endpoint<IEventRequest, IEventResponse>({
+export const Event = endpoint<StartRequest, StartResponse>({
   path: "/event",
 });

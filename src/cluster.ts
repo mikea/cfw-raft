@@ -26,7 +26,8 @@ export const CreateClusterActor = <S, A extends object>(staticConfig: IClusterSt
 
 const defaultClusterConfig: IClusterConfig = {
   members: 5,
-  electionDelayMs: 1000,
+  electionDelayMs: 5000,
+  updatePeriod: 1000,
 };
 
 export const StartCluster = endpoint<IPartialClusterConfig, IClusterState>({
@@ -67,7 +68,7 @@ class ClusterActor<S, A extends object> {
           others.splice(idx, 1);
           return call(this.memberActor.get(id), Event, {
             type: "startRequest",
-            config: { others, electionDelayMs: config.electionDelayMs },
+            config: { others, electionDelayMs: config.electionDelayMs, updatePeriodMs: config.updatePeriod },
           });
         }),
       ),

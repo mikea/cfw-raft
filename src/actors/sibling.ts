@@ -8,7 +8,7 @@ type SiblingContext = {
 };
 
 
-const fetchMachine = createMachine<{ fetcher: Fetcher; msg: MemberRequest; replyTo: string }>(
+const fetchMachine = createMachine<{ fetcher: Fetcher; msg: MemberRequest<any>; replyTo: string }>(
   {
     id: "fetch",
     initial: "start",
@@ -44,19 +44,16 @@ const fetchMachine = createMachine<{ fetcher: Fetcher; msg: MemberRequest; reply
   },
 );
 
-export type SiblingEvent = { type: "call"; msg: MemberRequest };
-
-export const siblingMachine = createMachine<SiblingContext, SiblingEvent>({
+export const siblingMachine = createMachine<SiblingContext, MemberRequest<any>>({
   id: "sibling",
   initial: "start",
   states: {
     start: {
       on: {
-        call: {
+        "*": {
           actions: [
-            log((ctx, evt) => `calling ${ctx.stub.id} ${JSON.stringify(evt.msg)}`),
             assign({
-              lastRequest: (ctx, event, meta) => spawn(fetchMachine.withContext({ fetcher: ctx.stub, msg: event.msg, replyTo: meta._event.origin! })),
+              lastRequest: (ctx, msg, meta) => spawn(fetchMachine.withContext({ fetcher: ctx.stub, msg, replyTo: meta._event.origin! })),
             }),
           ],
         },

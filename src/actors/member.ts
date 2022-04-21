@@ -1,12 +1,11 @@
 import { ActorRef, assign, createMachine } from "xstate";
 import { log, pure, send, sendTo } from "xstate/lib/actions";
 import { Env } from "../env";
-import { IVoteRequest, IVoteResponse, MemberRequest, MemberResponse } from "../messages";
-import { IClusterStaticConfig, IMemberConfig, IMemberState } from "../model";
-import { SiblingEvent } from "./sibling";
+import { IAppendRequest, IVoteRequest, IVoteResponse, MemberRequest, MemberResponse } from "../messages";
+import { IClusterStaticConfig, IMemberConfig, IMemberState, ISyncState } from "../model";
 import { newRandom32 } from "@mikea/cfw-utils/random";
 
-export interface MemberContext<S, A extends object> {
+export interface MemberContext<S, A> {
   env: Env;
   id: string;
   storage: DurableObjectStorage;
@@ -14,28 +13,27 @@ export interface MemberContext<S, A extends object> {
 
   state: IMemberState<S, A>;
   config: IMemberConfig;
-  siblings: ActorRef<SiblingEvent>[];
+  siblings: Array<{ id: string; ref: ActorRef<MemberEvent<A>> }>;
 
-  // transient state
+  // volatile state
+  votedFor?: string;
   votesCollected: number;
+  commitIndex: number;
+  lastApplied: number;
+  // only on leader
+  syncState: Record<string, ISyncState>;
 }
 
 const random = newRandom32(Date.now());
 
-export type MemberEvent = (MemberRequest & { replyTo: string }) | MemberResponse;
-export const memberMachine = createMachine<MemberContext<any, object>, MemberEvent>(
+export type MemberEvent<A> = (MemberRequest<A> & { replyTo: string }) | MemberResponse;
+
+export const memberMachine = createMachine<MemberContext<any, object>, MemberEvent<any>>(
   {
     id: "member",
-    initial: "candidate",
+    initial: "follower",
     states: {
-      follower: {
-        after: {
-          ELECTION_DELAY: {
-            actions: log((ctx) => `[${ctx.id}] election timeout`),
-            target: "candidate"
-          },
-        },
-      },
+      follower: {},
       candidate: {
         initial: "waitRandom",
         states: {
@@ -64,15 +62,30 @@ export const memberMachine = createMachine<MemberContext<any, object>, MemberEve
             },
           },
           checkVotes: {
+            entry: [log((ctx) => `[${ctx.id}] have ${ctx.votesCollected} votes`)],
             always: [
               { target: "#member.leader", cond: "haveMajorityVotes" },
               { target: "#member.candidate.waitForVote" },
-            ]
-          }
+            ],
+          },
         },
       },
       leader: {
-        entry: [ log((ctx) => `@@@@@@@@@@@ [${ctx.id}] I am the leader`) ]
+        initial: "init",
+        states: {
+          init: {
+            entry: ["initLeader", log((ctx) => `[${ctx.id}] I am leader`)],
+            always: { target: "sendUpdates" },
+          },
+          sendUpdates: {
+            entry: [log((ctx) => `@@@@@@@@@@@ [${ctx.id}] sending updates`), "sendUpdates"],
+            after: {
+              UPDATE_PERIOD: {
+                actions: log((ctx) => `&&&&&&&& [${ctx.id}] update period`),
+              },
+            },
+          },
+        },
       },
     },
     on: {
@@ -80,46 +93,45 @@ export const memberMachine = createMachine<MemberContext<any, object>, MemberEve
         {
           target: "follower",
           cond: "voteGranted",
-          actions: [
-            "termCatchup",
-            "replyVoteGranted",
-            log(
-              (ctx, event, meta) =>
-                `*** [${ctx.id}] vote granted for ${event.src} meta ${JSON.stringify(meta._event.origin)}`,
-            ),
-          ],
+          actions: ["termCatchup", "replyVoteGranted", log((ctx, evt) => `[${ctx.id}] vote granted`)],
         },
         {
-          actions: [
-            "replyVoteNotGranted",
-            log((ctx, event, _meta) => `*** [${ctx.id}] vote not granted for ${event.src}`),
-          ],
+          actions: ["replyVoteNotGranted", log((ctx, evt) => `[${ctx.id}] vote not granted`)],
         },
       ],
+      appendRequest: [
+        {
+          actions: [log((ctx, evt) => `<<<< [${ctx.id}] append request ${JSON.stringify(evt)}`)],
+        },
+      ],
+    },
+    after: {
+      ELECTION_DELAY: {
+        actions: log((ctx) => `[${ctx.id}] election timeout`),
+        target: "candidate",
+      },
     },
   },
   {
     delays: {
-      ELECTION_DELAY: (context) => context.config?.electionDelayMs,
-      RANDOM_DELAY: () => random.randU32() % 100,
+      ELECTION_DELAY: (ctx) => ctx.config?.electionDelayMs,
+      RANDOM_DELAY: (ctx) => random.randU32() % ctx.config?.electionDelayMs,
+      UPDATE_PERIOD: (ctx) => ctx.config?.updatePeriodMs,
     },
     actions: {
       startVoting: assign({
         state: (ctx) => ({
           ...ctx.state!,
           currentTerm: (ctx.state?.currentTerm ?? 0) + 1,
-          votedFor: ctx.id,
         }),
+        votedFor: (ctx) => ctx.id,
         votesCollected: (_ctx) => 0,
       }),
       sendVoteRequests: pure((ctx) =>
         ctx.siblings.map((sibling) =>
           sendTo(
-            () => sibling as any,
-            (ctx) => ({
-              type: "call",
-              msg: buildVoteRequest(ctx),
-            }),
+            () => sibling.ref as any,
+            (ctx) => buildVoteRequest(ctx),
           ),
         ),
       ),
@@ -153,8 +165,32 @@ export const memberMachine = createMachine<MemberContext<any, object>, MemberEve
       ),
       countVote: assign({
         votesCollected: (ctx, evt) =>
-          ctx.votesCollected + ( evt.type === "voteResponse" && evt.voteGranted && evt.srcTerm == ctx.state.currentTerm ? 1 : 0),
-      })
+          ctx.votesCollected +
+          (evt.type === "voteResponse" && evt.voteGranted && evt.srcTerm == ctx.state.currentTerm ? 1 : 0),
+      }),
+      initLeader: assign({
+        syncState: (ctx) => {
+          const syncState: Record<string, ISyncState> = {};
+          const lastLogEntry = last(ctx.state.log);
+          const lastLogIndex = lastLogEntry ? lastLogEntry.index : -1;
+
+          for (const sibling of ctx.siblings) {
+            syncState[sibling.id] = {
+              nextIndex: lastLogIndex + 1,
+              matchIndex: 0,
+            };
+          }
+          return syncState;
+        },
+      }),
+      sendUpdates: pure((ctx) =>
+        ctx.siblings.map((sibling) =>
+          sendTo(
+            () => sibling.ref as any,
+            (ctx) => buildAppendRequest(ctx, sibling.id),
+          ),
+        ),
+      ),
     },
 
     guards: {
@@ -162,20 +198,18 @@ export const memberMachine = createMachine<MemberContext<any, object>, MemberEve
         if (event.type !== "voteRequest") return false;
 
         const state = ctx.state;
-        const lastLogEntry = state.log.length > 0 ? state.log[state.log.length - 1] : undefined;
+        const lastLogEntry = last(state.log);
         const lastLogTerm = lastLogEntry ? lastLogEntry.term : -1;
         const lastLogIndex = lastLogEntry ? lastLogEntry.index : -1;
         const logOk =
           event.lastLogTerm > lastLogTerm || (event.lastLogTerm === lastLogTerm && event.lastLogIndex >= lastLogIndex);
-        const voteGranted = logOk && (!state.votedFor || state.votedFor === event.src);
-        console.error("voteGranted", { event, voteGranted, logOk, state });
-
+        const voteGranted = logOk && (!ctx.votedFor || ctx.votedFor === event.src);
         return voteGranted;
       },
 
       haveMajorityVotes: (ctx) => {
         return ctx.votesCollected > ctx.siblings.length / 2;
-      }
+      },
     },
 
     services: {
@@ -185,7 +219,7 @@ export const memberMachine = createMachine<MemberContext<any, object>, MemberEve
   },
 );
 
-function buildVoteRequest<S, A extends object>(ctx: MemberContext<S, A>): IVoteRequest {
+function buildVoteRequest<S, A>(ctx: MemberContext<S, A>): IVoteRequest {
   const lastLogEntry = last(ctx.state.log);
   // todo: replace -1 with 0?
   const lastLogTerm = lastLogEntry ? lastLogEntry.term : -1;
@@ -197,6 +231,28 @@ function buildVoteRequest<S, A extends object>(ctx: MemberContext<S, A>): IVoteR
     srcTerm: ctx.state.currentTerm,
     lastLogIndex: lastLogIndex,
     lastLogTerm: lastLogTerm,
+  };
+}
+
+function buildAppendRequest<S, A>(ctx: MemberContext<S, A>, memberId: string): IAppendRequest<A> {
+  const state = ctx.state;
+  const syncState = ctx.syncState[memberId]!;
+
+  const prevLogIndex = syncState.nextIndex - 1;
+  const prevLogTerm = prevLogIndex >= 0 ? state.log.find((e) => e.index === prevLogIndex)!.term : -1;
+
+  // const response = await call(getFromString(this.memberActor, memberId), Append, {
+  //   term: state.currentTerm,
+  //   sourceId: this.id,
+  // });
+  return {
+    type: "appendRequest",
+    src: ctx.id,
+    srcTerm: state.currentTerm,
+    prevLogIndex,
+    prevLogTerm,
+    leaderCommit: ctx.commitIndex,
+    entries: state.log.filter((e) => e.index > prevLogIndex),
   };
 }
 

@@ -8,7 +8,7 @@ const requestMachine = createMachine<{ request: HttpRequest; ref: ActorRef<any> 
   initial: "start",
   states: {
     start: {
-      entry: send((ctx) => ctx.request.body, { to: (ctx) => ctx.ref }),
+      entry: [send((ctx) => ctx.request.body, { to: (ctx) => ctx.ref })],
     },
     done: {
       type: "final",
