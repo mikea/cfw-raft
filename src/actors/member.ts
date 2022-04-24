@@ -40,204 +40,205 @@ const random = newRandom32(Date.now());
 
 export type MemberEvent<A> = (MemberRequest<A> & { replyTo: string }) | MemberResponse;
 
-export const memberMachine = createMachine<MemberContext<any, object>, MemberEvent<any>>(
-  {
-    id: "member",
-    initial: "follower",
-    states: {
-      follower: {},
-      candidate: {
-        initial: "waitRandom",
-        states: {
-          waitRandom: {
-            after: {
-              RANDOM_DELAY: { target: "startVoting" },
+export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
+  return createMachine<MemberContext<S, A>, MemberEvent<A>>(
+    {
+      id: "member",
+      initial: "follower",
+      states: {
+        follower: {},
+        candidate: {
+          initial: "waitRandom",
+          states: {
+            waitRandom: {
+              after: {
+                RANDOM_DELAY: { target: "startVoting" },
+              },
+            },
+            startVoting: {
+              entry: [log((ctx) => `[${ctx.id}] start voting`), "startVoting"],
+              always: { target: "putState" },
+            },
+            putState: {
+              invoke: { id: "putState", src: "putState", onDone: "putStateDone" },
+            },
+            putStateDone: {
+              entry: ["sendVoteRequests"],
+              always: { target: "waitForVote" },
+            },
+            waitForVote: {
+              on: {
+                voteResponse: { actions: "countVote", target: "checkVotes" },
+              },
+            },
+            checkVotes: {
+              entry: [log((ctx) => `[${ctx.id}] have ${ctx.votesCollected} votes`)],
+              always: [
+                { target: "#member.leader", cond: "haveMajorityVotes" },
+                { target: "#member.candidate.waitForVote" },
+              ],
             },
           },
-          startVoting: {
-            entry: [log((ctx) => `[${ctx.id}] start voting`), "startVoting"],
-            always: { target: "putState" },
-          },
-          putState: {
-            invoke: { id: "putState", src: "putState", onDone: "putStateDone" },
-          },
-          putStateDone: {
-            entry: ["sendVoteRequests"],
-            always: { target: "waitForVote" },
-          },
-          waitForVote: {
-            on: {
-              voteResponse: { actions: "countVote", target: "checkVotes" },
+        },
+        leader: {
+          initial: "init",
+          states: {
+            init: {
+              entry: ["initLeader", log((ctx) => `[${ctx.id}] I am leader`)],
+              always: { target: "sendUpdates" },
+            },
+            sendUpdates: {
+              entry: [log((ctx) => `[${ctx.id}] sending updates`), "sendUpdates"],
+              always: { target: "waitForUpdate" },
+            },
+            waitForUpdate: {
+              after: {
+                UPDATE_PERIOD: {
+                  actions: log((ctx) => `&&&&&&&& [${ctx.id}] update period`),
+                  target: "sendUpdates",
+                },
+              },
+              on: {
+                appendResponse: {
+                  actions: [
+                    "registerAppendResponse",
+                    log((ctx, evt) => `@@@@@@@@@@@ [${ctx.id}] append response ${JSON.stringify(evt)} -> ${JSON.stringify(ctx.syncState)}`),
+                  ],
+                },
+              },
             },
           },
-          checkVotes: {
-            entry: [log((ctx) => `[${ctx.id}] have ${ctx.votesCollected} votes`)],
-            always: [
-              { target: "#member.leader", cond: "haveMajorityVotes" },
-              { target: "#member.candidate.waitForVote" },
+        },
+      },
+      on: {
+        voteRequest: [
+          {
+            target: "follower",
+            cond: "voteGranted",
+            actions: ["termCatchup", "replyVoteGranted", log((ctx) => `[${ctx.id}] vote granted`)],
+          },
+          {
+            actions: ["replyVoteNotGranted", log((ctx) => `[${ctx.id}] vote not granted`)],
+          },
+        ],
+        appendRequest: [
+          {
+            target: "follower",
+            cond: "appendOk",
+            actions: [
+              log((ctx, evt) => `[${ctx.id}] ok append request ${JSON.stringify(evt)}`),
+              "termCatchup",
+              "applyAppend",
+              "replyAppendOk",
             ],
           },
-        },
+          {
+            actions: [log((ctx, evt) => `<<<< [${ctx.id}] append request ${JSON.stringify(evt)}`), "replyAppendNotOk"],
+          },
+        ],
       },
-      leader: {
-        initial: "init",
-        states: {
-          init: {
-            entry: ["initLeader", log((ctx) => `[${ctx.id}] I am leader`)],
-            always: { target: "sendUpdates" },
-          },
-          sendUpdates: {
-            entry: [log((ctx) => `[${ctx.id}] sending updates`), "sendUpdates"],
-            always: { target: "waitForUpdate" },
-          },
-          waitForUpdate: {
-            after: {
-              UPDATE_PERIOD: {
-                actions: log((ctx) => `&&&&&&&& [${ctx.id}] update period`),
-                target: "sendUpdates",
-              },
-            },
-            on: {
-              appendResponse: {
-                actions: [
-                  "registerAppendResponse",
-                  log((ctx, evt) => `@@@@@@@@@@@ [${ctx.id}] append response ${JSON.stringify(evt)} -> ${JSON.stringify(ctx.syncState)}`),
-                ],
-              },
-            },
-          },
+      after: {
+        ELECTION_DELAY: {
+          actions: log((ctx) => `$$$$$$$$$$$$$$$$$$$$$$ [${ctx.id}] election timeout`),
+          target: "candidate",
         },
       },
     },
-    on: {
-      voteRequest: [
-        {
-          target: "follower",
-          cond: "voteGranted",
-          actions: ["termCatchup", "replyVoteGranted", log((ctx) => `[${ctx.id}] vote granted`)],
-        },
-        {
-          actions: ["replyVoteNotGranted", log((ctx) => `[${ctx.id}] vote not granted`)],
-        },
-      ],
-      appendRequest: [
-        {
-          target: "follower",
-          cond: "appendOk",
-          actions: [
-            log((ctx, evt) => `[${ctx.id}] ok append request ${JSON.stringify(evt)}`),
-            "termCatchup",
-            "applyAppend",
-            "replyAppendOk",
-          ],
-        },
-        {
-          actions: [log((ctx, evt) => `<<<< [${ctx.id}] append request ${JSON.stringify(evt)}`), "replyAppendNotOk"],
-        },
-      ],
-    },
-    after: {
-      ELECTION_DELAY: {
-        actions: log((ctx) => `$$$$$$$$$$$$$$$$$$$$$$ [${ctx.id}] election timeout`),
-        target: "candidate",
+    {
+      delays: {
+        ELECTION_DELAY: (ctx) => ctx.config?.electionDelayMs,
+        RANDOM_DELAY: (ctx) => random.randU32() % ctx.config?.electionDelayMs,
+        UPDATE_PERIOD: (ctx) => ctx.config?.updatePeriodMs,
       },
-    },
-  },
-  {
-    delays: {
-      ELECTION_DELAY: (ctx) => ctx.config?.electionDelayMs,
-      RANDOM_DELAY: (ctx) => random.randU32() % ctx.config?.electionDelayMs,
-      UPDATE_PERIOD: (ctx) => ctx.config?.updatePeriodMs,
-    },
-    actions: {
-      startVoting: assign({
-        state: (ctx) => ({
-          ...ctx.state!,
-          currentTerm: (ctx.state?.currentTerm ?? 0) + 1,
+      actions: {
+        startVoting: assign({
+          state: (ctx) => ({
+            ...ctx.state!,
+            currentTerm: (ctx.state?.currentTerm ?? 0) + 1,
+          }),
+          votedFor: (ctx) => ctx.id,
+          votesCollected: (_ctx) => 0,
         }),
-        votedFor: (ctx) => ctx.id,
-        votesCollected: (_ctx) => 0,
-      }),
-      sendVoteRequests: pure((ctx) =>
-        ctx.siblings.map((sibling) =>
-          sendTo(
-            () => sibling.ref as any,
-            (ctx) => buildVoteRequest(ctx),
+        sendVoteRequests: pure((ctx) =>
+          ctx.siblings.map((sibling) =>
+            sendTo(
+              () => sibling.ref as any,
+              (ctx) => buildVoteRequest(ctx),
+            ),
           ),
         ),
-      ),
-      termCatchup: assign({
-        state: (ctx, event) => ({
-          ...ctx.state!,
-          currentTerm: event.srcTerm,
-          votedFor: event.src,
-          syncState: {},
+        termCatchup: assign({
+          state: (ctx, event) => ({
+            ...ctx.state!,
+            currentTerm: event.srcTerm,
+            votedFor: event.src,
+            syncState: {},
+          }),
         }),
-      }),
-      replyVoteGranted: send(
-        (ctx) =>
+        replyVoteGranted: send(
+          (ctx) =>
           ({
             type: "voteResponse",
             src: ctx.id,
             srcTerm: ctx.state.currentTerm,
             voteGranted: true,
           } as IVoteResponse),
-        { to: (_ctx, _event, meta) => meta._event.origin! },
-      ),
-      replyVoteNotGranted: send(
-        (ctx) =>
+          { to: (_ctx, _event, meta) => meta._event.origin! },
+        ),
+        replyVoteNotGranted: send(
+          (ctx) =>
           ({
             type: "voteResponse",
             src: ctx.id,
             srcTerm: ctx.state.currentTerm,
             voteGranted: false,
           } as IVoteResponse),
-        { to: (_ctx, _event, meta) => meta._event.origin! },
-      ),
-      countVote: assign({
-        votesCollected: (ctx, evt) =>
-          ctx.votesCollected +
-          (evt.type === "voteResponse" && evt.voteGranted && evt.srcTerm == ctx.state.currentTerm ? 1 : 0),
-      }),
-      initLeader: assign({
-        syncState: (ctx) => {
-          const syncState: Record<string, ISyncState> = {};
-          const lastLogEntry = last(ctx.state.log);
-          const lastLogIndex = lastLogEntry ? lastLogEntry.index : -1;
+          { to: (_ctx, _event, meta) => meta._event.origin! },
+        ),
+        countVote: assign({
+          votesCollected: (ctx, evt) =>
+            ctx.votesCollected +
+            (evt.type === "voteResponse" && evt.voteGranted && evt.srcTerm == ctx.state.currentTerm ? 1 : 0),
+        }),
+        initLeader: assign({
+          syncState: (ctx) => {
+            const syncState: Record<string, ISyncState> = {};
+            const lastLogEntry = last(ctx.state.log);
+            const lastLogIndex = lastLogEntry ? lastLogEntry.index : -1;
 
-          for (const sibling of ctx.siblings) {
-            syncState[sibling.id] = {
-              nextIndex: lastLogIndex + 1,
-              matchIndex: 0,
-            };
-          }
-          return syncState;
-        },
-      }),
-      sendUpdates: pure((ctx) =>
-        ctx.siblings.map((sibling) =>
-          sendTo(
-            () => sibling.ref as any,
-            (ctx) => buildAppendRequest(ctx, sibling.id),
+            for (const sibling of ctx.siblings) {
+              syncState[sibling.id] = {
+                nextIndex: lastLogIndex + 1,
+                matchIndex: 0,
+              };
+            }
+            return syncState;
+          },
+        }),
+        sendUpdates: pure((ctx) =>
+          ctx.siblings.map((sibling) =>
+            sendTo(
+              () => sibling.ref as any,
+              (ctx) => buildAppendRequest(ctx, sibling.id),
+            ),
           ),
         ),
-      ),
-      replyAppendNotOk: send(
-        (ctx) =>
+        replyAppendNotOk: send(
+          (ctx) =>
           ({
             type: "appendResponse",
             src: ctx.id,
             srcTerm: ctx.state.currentTerm,
             success: false,
           } as IAppendResponse),
-        { to: (_ctx, _event, meta) => meta._event.origin! },
-      ),
-      applyAppend: assign({
-        state: (ctx, evt) => ({ ...ctx.state, log: applyLog(ctx.state.log, evt as IAppendRequest<any>) }),
-        commitIndex: (ctx, evt) => (evt as IAppendRequest<any>).leaderCommit,
-      }),
-      replyAppendOk: send(
-        (ctx) =>
+          { to: (_ctx, _event, meta) => meta._event.origin! },
+        ),
+        applyAppend: assign({
+          state: (ctx, evt) => ({ ...ctx.state, log: applyLog(ctx.state.log, evt as IAppendRequest<any>) }),
+          commitIndex: (ctx, evt) => (evt as IAppendRequest<any>).leaderCommit,
+        }),
+        replyAppendOk: send(
+          (ctx) =>
           ({
             type: "appendResponse",
             src: ctx.id,
@@ -245,64 +246,65 @@ export const memberMachine = createMachine<MemberContext<any, object>, MemberEve
             success: true,
             matchIndex: last(ctx.state.log) ? last(ctx.state.log)!.index : -1,
           } as IAppendResponse),
-        { to: (_ctx, _event, meta) => meta._event.origin! },
-      ),
-      registerAppendResponse: assign({
-        syncState: (ctx, evt) =>
-          evt.type === "appendResponse" && evt.success
-            ? {
+          { to: (_ctx, _event, meta) => meta._event.origin! },
+        ),
+        registerAppendResponse: assign({
+          syncState: (ctx, evt) =>
+            evt.type === "appendResponse" && evt.success
+              ? {
                 ...ctx.syncState,
                 [evt.src]: {
                   matchIndex: evt.matchIndex,
                   nextIndex: evt.matchIndex + 1,
                 },
               }
-            : ctx.syncState,
-      }),
-    },
-
-    guards: {
-      voteGranted: (ctx, event) => {
-        if (event.type !== "voteRequest") return false;
-
-        const state = ctx.state;
-        const lastLogEntry = last(state.log);
-        const lastLogTerm = lastLogEntry ? lastLogEntry.term : -1;
-        const lastLogIndex = lastLogEntry ? lastLogEntry.index : -1;
-        const logOk =
-          event.lastLogTerm > lastLogTerm || (event.lastLogTerm === lastLogTerm && event.lastLogIndex >= lastLogIndex);
-        const voteGranted = logOk && (!ctx.votedFor || ctx.votedFor === event.src);
-        return voteGranted;
+              : ctx.syncState,
+        }),
       },
 
-      haveMajorityVotes: (ctx) => {
-        return ctx.votesCollected > ctx.siblings.length / 2;
+      guards: {
+        voteGranted: (ctx, event) => {
+          if (event.type !== "voteRequest") return false;
+
+          const state = ctx.state;
+          const lastLogEntry = last(state.log);
+          const lastLogTerm = lastLogEntry ? lastLogEntry.term : -1;
+          const lastLogIndex = lastLogEntry ? lastLogEntry.index : -1;
+          const logOk =
+            event.lastLogTerm > lastLogTerm || (event.lastLogTerm === lastLogTerm && event.lastLogIndex >= lastLogIndex);
+          const voteGranted = logOk && (!ctx.votedFor || ctx.votedFor === event.src);
+          return voteGranted;
+        },
+
+        haveMajorityVotes: (ctx) => {
+          return ctx.votesCollected > ctx.siblings.length / 2;
+        },
+
+        appendOk: (ctx, event) => {
+          if (event.type !== "appendRequest") return false;
+
+          const state = ctx.state;
+
+          // drop old request
+          if (event.srcTerm < state.currentTerm) return false;
+
+          const prevLogI = state.log.findIndex((e) => e.index == event.prevLogIndex);
+          const prevLogEntry = prevLogI >= 0 ? state.log[prevLogI] : undefined;
+          const logOk =
+            event.prevLogIndex === -1 ||
+            // we need to have an entry corresponding to the prevLogIndex.
+            (prevLogEntry && event.prevLogTerm === prevLogEntry.term);
+          return logOk ?? false;
+        },
       },
 
-      appendOk: (ctx, event) => {
-        if (event.type !== "appendRequest") return false;
-
-        const state = ctx.state;
-
-        // drop old request
-        if (event.srcTerm < state.currentTerm) return false;
-
-        const prevLogI = state.log.findIndex((e) => e.index == event.prevLogIndex);
-        const prevLogEntry = prevLogI >= 0 ? state.log[prevLogI] : undefined;
-        const logOk =
-          event.prevLogIndex === -1 ||
-          // we need to have an entry corresponding to the prevLogIndex.
-          (prevLogEntry && event.prevLogTerm === prevLogEntry.term);
-        return logOk ?? false;
+      services: {
+        putConfig: (context) => context.storage.put("config", context.config),
+        putState: (context) => context.storage.put("state", context.state),
       },
     },
-
-    services: {
-      putConfig: (context) => context.storage.put("config", context.config),
-      putState: (context) => context.storage.put("state", context.state),
-    },
-  },
-);
+  ).withContext(initialContext);
+}
 
 function buildVoteRequest<S, A>(ctx: MemberContext<S, A>): IVoteRequest {
   const lastLogEntry = last(ctx.state.log);
