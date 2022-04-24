@@ -76,7 +76,7 @@ class ClusterActor<S, A extends object> {
     if (members instanceof Error) {
       return members;
     }
-    const state = { members:strIds, id: this.state.id.toString() };
+    const state = { members: strIds, id: this.state.id.toString() };
     log("cluster start", { state });
     return this.clusterState.put(state);
   };

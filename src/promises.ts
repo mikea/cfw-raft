@@ -4,7 +4,6 @@ export async function timeout(durationMs: number): Promise<unknown> {
   });
 }
 
-
 export interface Barrier<T> {
   promise: Promise<T>;
   resolve(t: T): void;
@@ -12,7 +11,7 @@ export interface Barrier<T> {
 
 export function barrier<T>(): Barrier<T> {
   let resolveCallback: (t: T) => void;
-  const promise = new Promise<T>(resolve => resolveCallback = resolve);
+  const promise = new Promise<T>((resolve) => (resolveCallback = resolve));
   return {
     promise,
     resolve: (t) => resolveCallback(t),

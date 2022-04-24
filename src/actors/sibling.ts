@@ -7,7 +7,6 @@ type SiblingContext = {
   lastRequest?: ActorRef<any>;
 };
 
-
 const fetchMachine = createMachine<{ fetcher: Fetcher; msg: MemberRequest<any>; replyTo: string }>(
   {
     id: "fetch",
@@ -53,7 +52,8 @@ export const siblingMachine = createMachine<SiblingContext, MemberRequest<any>>(
         "*": {
           actions: [
             assign({
-              lastRequest: (ctx, msg, meta) => spawn(fetchMachine.withContext({ fetcher: ctx.stub, msg, replyTo: meta._event.origin! })),
+              lastRequest: (ctx, msg, meta) =>
+                spawn(fetchMachine.withContext({ fetcher: ctx.stub, msg, replyTo: meta._event.origin! })),
             }),
           ],
         },

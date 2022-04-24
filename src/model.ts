@@ -43,7 +43,6 @@ export interface IMemberState<S, A> {
   state: S;
 }
 
-
 export interface ISyncState {
   nextIndex: number;
   matchIndex: number;

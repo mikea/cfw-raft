@@ -102,7 +102,12 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
                 appendResponse: {
                   actions: [
                     "registerAppendResponse",
-                    log((ctx, evt) => `@@@@@@@@@@@ [${ctx.id}] append response ${JSON.stringify(evt)} -> ${JSON.stringify(ctx.syncState)}`),
+                    log(
+                      (ctx, evt) =>
+                        `@@@@@@@@@@@ [${ctx.id}] append response ${JSON.stringify(evt)} -> ${JSON.stringify(
+                          ctx.syncState,
+                        )}`,
+                    ),
                   ],
                 },
               },
@@ -177,22 +182,22 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
         }),
         replyVoteGranted: send(
           (ctx) =>
-          ({
-            type: "voteResponse",
-            src: ctx.id,
-            srcTerm: ctx.state.currentTerm,
-            voteGranted: true,
-          } as IVoteResponse),
+            ({
+              type: "voteResponse",
+              src: ctx.id,
+              srcTerm: ctx.state.currentTerm,
+              voteGranted: true,
+            } as IVoteResponse),
           { to: (_ctx, _event, meta) => meta._event.origin! },
         ),
         replyVoteNotGranted: send(
           (ctx) =>
-          ({
-            type: "voteResponse",
-            src: ctx.id,
-            srcTerm: ctx.state.currentTerm,
-            voteGranted: false,
-          } as IVoteResponse),
+            ({
+              type: "voteResponse",
+              src: ctx.id,
+              srcTerm: ctx.state.currentTerm,
+              voteGranted: false,
+            } as IVoteResponse),
           { to: (_ctx, _event, meta) => meta._event.origin! },
         ),
         countVote: assign({
@@ -225,12 +230,12 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
         ),
         replyAppendNotOk: send(
           (ctx) =>
-          ({
-            type: "appendResponse",
-            src: ctx.id,
-            srcTerm: ctx.state.currentTerm,
-            success: false,
-          } as IAppendResponse),
+            ({
+              type: "appendResponse",
+              src: ctx.id,
+              srcTerm: ctx.state.currentTerm,
+              success: false,
+            } as IAppendResponse),
           { to: (_ctx, _event, meta) => meta._event.origin! },
         ),
         applyAppend: assign({
@@ -239,25 +244,25 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
         }),
         replyAppendOk: send(
           (ctx) =>
-          ({
-            type: "appendResponse",
-            src: ctx.id,
-            srcTerm: ctx.state.currentTerm,
-            success: true,
-            matchIndex: last(ctx.state.log) ? last(ctx.state.log)!.index : -1,
-          } as IAppendResponse),
+            ({
+              type: "appendResponse",
+              src: ctx.id,
+              srcTerm: ctx.state.currentTerm,
+              success: true,
+              matchIndex: last(ctx.state.log) ? last(ctx.state.log)!.index : -1,
+            } as IAppendResponse),
           { to: (_ctx, _event, meta) => meta._event.origin! },
         ),
         registerAppendResponse: assign({
           syncState: (ctx, evt) =>
             evt.type === "appendResponse" && evt.success
               ? {
-                ...ctx.syncState,
-                [evt.src]: {
-                  matchIndex: evt.matchIndex,
-                  nextIndex: evt.matchIndex + 1,
-                },
-              }
+                  ...ctx.syncState,
+                  [evt.src]: {
+                    matchIndex: evt.matchIndex,
+                    nextIndex: evt.matchIndex + 1,
+                  },
+                }
               : ctx.syncState,
         }),
       },
@@ -271,7 +276,8 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
           const lastLogTerm = lastLogEntry ? lastLogEntry.term : -1;
           const lastLogIndex = lastLogEntry ? lastLogEntry.index : -1;
           const logOk =
-            event.lastLogTerm > lastLogTerm || (event.lastLogTerm === lastLogTerm && event.lastLogIndex >= lastLogIndex);
+            event.lastLogTerm > lastLogTerm ||
+            (event.lastLogTerm === lastLogTerm && event.lastLogIndex >= lastLogIndex);
           const voteGranted = logOk && (!ctx.votedFor || ctx.votedFor === event.src);
           return voteGranted;
         },
