@@ -37,7 +37,6 @@ export type IAppendResponse = {
         success: false;
       }
     | {
-        term: number;
         matchIndex: number;
         success: true;
       }

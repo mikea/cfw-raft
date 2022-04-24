@@ -1,19 +1,31 @@
 import { ActorRef, assign, createMachine } from "xstate";
-import { log, pure, send, sendTo } from "xstate/lib/actions";
+import { log, pure, send, sendTo, sendUpdate } from "xstate/lib/actions";
 import { Env } from "../env";
-import { IAppendRequest, IVoteRequest, IVoteResponse, MemberRequest, MemberResponse } from "../messages";
-import { IClusterStaticConfig, IMemberConfig, IMemberState, ISyncState } from "../model";
+import {
+  IAppendRequest,
+  IAppendResponse,
+  IVoteRequest,
+  IVoteResponse,
+  MemberRequest,
+  MemberResponse,
+} from "../messages";
+import { IClusterStaticConfig, ILogEntry, IMemberConfig, IMemberState, ISyncState } from "../model";
 import { newRandom32 } from "@mikea/cfw-utils/random";
 
 export interface MemberContext<S, A> {
+  // environment
   env: Env;
   id: string;
   storage: DurableObjectStorage;
-  staticConfig: IClusterStaticConfig<S, A>;
-
-  state: IMemberState<S, A>;
-  config: IMemberConfig;
   siblings: Array<{ id: string; ref: ActorRef<MemberEvent<A>> }>;
+
+  // configuration
+  staticConfig: IClusterStaticConfig<S, A>;
+  config: IMemberConfig;
+
+  // persistent state
+  // todo: move log out
+  state: IMemberState<S, A>;
 
   // volatile state
   votedFor?: string;
@@ -55,10 +67,7 @@ export const memberMachine = createMachine<MemberContext<any, object>, MemberEve
           },
           waitForVote: {
             on: {
-              voteResponse: {
-                actions: "countVote",
-                target: "checkVotes",
-              },
+              voteResponse: { actions: "countVote", target: "checkVotes" },
             },
           },
           checkVotes: {
@@ -78,10 +87,22 @@ export const memberMachine = createMachine<MemberContext<any, object>, MemberEve
             always: { target: "sendUpdates" },
           },
           sendUpdates: {
-            entry: [log((ctx) => `@@@@@@@@@@@ [${ctx.id}] sending updates`), "sendUpdates"],
+            entry: [log((ctx) => `[${ctx.id}] sending updates`), "sendUpdates"],
+            always: { target: "waitForUpdate" },
+          },
+          waitForUpdate: {
             after: {
               UPDATE_PERIOD: {
                 actions: log((ctx) => `&&&&&&&& [${ctx.id}] update period`),
+                target: "sendUpdates",
+              },
+            },
+            on: {
+              appendResponse: {
+                actions: [
+                  "registerAppendResponse",
+                  log((ctx, evt) => `@@@@@@@@@@@ [${ctx.id}] append response ${JSON.stringify(evt)} -> ${JSON.stringify(ctx.syncState)}`),
+                ],
               },
             },
           },
@@ -93,21 +114,31 @@ export const memberMachine = createMachine<MemberContext<any, object>, MemberEve
         {
           target: "follower",
           cond: "voteGranted",
-          actions: ["termCatchup", "replyVoteGranted", log((ctx, evt) => `[${ctx.id}] vote granted`)],
+          actions: ["termCatchup", "replyVoteGranted", log((ctx) => `[${ctx.id}] vote granted`)],
         },
         {
-          actions: ["replyVoteNotGranted", log((ctx, evt) => `[${ctx.id}] vote not granted`)],
+          actions: ["replyVoteNotGranted", log((ctx) => `[${ctx.id}] vote not granted`)],
         },
       ],
       appendRequest: [
         {
-          actions: [log((ctx, evt) => `<<<< [${ctx.id}] append request ${JSON.stringify(evt)}`)],
+          target: "follower",
+          cond: "appendOk",
+          actions: [
+            log((ctx, evt) => `[${ctx.id}] ok append request ${JSON.stringify(evt)}`),
+            "termCatchup",
+            "applyAppend",
+            "replyAppendOk",
+          ],
+        },
+        {
+          actions: [log((ctx, evt) => `<<<< [${ctx.id}] append request ${JSON.stringify(evt)}`), "replyAppendNotOk"],
         },
       ],
     },
     after: {
       ELECTION_DELAY: {
-        actions: log((ctx) => `[${ctx.id}] election timeout`),
+        actions: log((ctx) => `$$$$$$$$$$$$$$$$$$$$$$ [${ctx.id}] election timeout`),
         target: "candidate",
       },
     },
@@ -191,6 +222,43 @@ export const memberMachine = createMachine<MemberContext<any, object>, MemberEve
           ),
         ),
       ),
+      replyAppendNotOk: send(
+        (ctx) =>
+          ({
+            type: "appendResponse",
+            src: ctx.id,
+            srcTerm: ctx.state.currentTerm,
+            success: false,
+          } as IAppendResponse),
+        { to: (_ctx, _event, meta) => meta._event.origin! },
+      ),
+      applyAppend: assign({
+        state: (ctx, evt) => ({ ...ctx.state, log: applyLog(ctx.state.log, evt as IAppendRequest<any>) }),
+        commitIndex: (ctx, evt) => (evt as IAppendRequest<any>).leaderCommit,
+      }),
+      replyAppendOk: send(
+        (ctx) =>
+          ({
+            type: "appendResponse",
+            src: ctx.id,
+            srcTerm: ctx.state.currentTerm,
+            success: true,
+            matchIndex: last(ctx.state.log) ? last(ctx.state.log)!.index : -1,
+          } as IAppendResponse),
+        { to: (_ctx, _event, meta) => meta._event.origin! },
+      ),
+      registerAppendResponse: assign({
+        syncState: (ctx, evt) =>
+          evt.type === "appendResponse" && evt.success
+            ? {
+                ...ctx.syncState,
+                [evt.src]: {
+                  matchIndex: evt.matchIndex,
+                  nextIndex: evt.matchIndex + 1,
+                },
+              }
+            : ctx.syncState,
+      }),
     },
 
     guards: {
@@ -209,6 +277,23 @@ export const memberMachine = createMachine<MemberContext<any, object>, MemberEve
 
       haveMajorityVotes: (ctx) => {
         return ctx.votesCollected > ctx.siblings.length / 2;
+      },
+
+      appendOk: (ctx, event) => {
+        if (event.type !== "appendRequest") return false;
+
+        const state = ctx.state;
+
+        // drop old request
+        if (event.srcTerm < state.currentTerm) return false;
+
+        const prevLogI = state.log.findIndex((e) => e.index == event.prevLogIndex);
+        const prevLogEntry = prevLogI >= 0 ? state.log[prevLogI] : undefined;
+        const logOk =
+          event.prevLogIndex === -1 ||
+          // we need to have an entry corresponding to the prevLogIndex.
+          (prevLogEntry && event.prevLogTerm === prevLogEntry.term);
+        return logOk ?? false;
       },
     },
 
@@ -258,4 +343,12 @@ function buildAppendRequest<S, A>(ctx: MemberContext<S, A>, memberId: string): I
 
 function last<T>(arr: T[]): T | undefined {
   return arr.length > 0 ? arr[arr.length - 1] : undefined;
+}
+
+function applyLog<A>(log: ILogEntry<A>[], evt: IAppendRequest<A>): ILogEntry<A>[] {
+  const prevLogI = log.findIndex((e) => e.index == evt.prevLogIndex);
+  const newLog = [...log];
+  newLog.splice(prevLogI);
+  newLog.push(...evt.entries);
+  return newLog;
 }
