@@ -1,5 +1,5 @@
-import { ActorRef, assign, createMachine } from "xstate";
-import { log, pure, send, sendTo, sendUpdate } from "xstate/lib/actions";
+import { ActorRef, assign, createMachine, EventObject, LogAction, LogExpr } from "xstate";
+import { log, pure, send, sendTo } from "xstate/lib/actions";
 import { Env } from "../env";
 import {
   IAppendRequest,
@@ -64,13 +64,13 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
           initial: "waitRandom",
           states: {
             waitRandom: {
-              entry: [log((ctx) => `[${ctx.id}] election timeout`)],
+              entry: [mlog("election timeout")],
               after: {
                 RANDOM_DELAY: { target: "startVoting" },
               },
             },
             startVoting: {
-              entry: [log((ctx) => `[${ctx.id}] start voting`), "startVoting"],
+              entry: [mlog("start voting"), "startVoting"],
               always: { target: "putState" },
             },
             putState: {
@@ -89,7 +89,7 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
               },
             },
             checkVotes: {
-              entry: [log((ctx) => `[${ctx.id}] have ${ctx.votesCollected} votes`)],
+              entry: [mlog((ctx) => `have ${ctx.votesCollected} votes`)],
               always: [
                 { target: "#member.leader", cond: "haveMajorityVotes" },
                 { target: "#member.candidate.waitForVote" },
@@ -101,17 +101,17 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
           initial: "init",
           states: {
             init: {
-              entry: ["initLeader", log((ctx) => `[${ctx.id}] I am the leader`)],
+              entry: ["initLeader", mlog("I am the leader")],
               always: { target: "sendUpdates" },
             },
             sendUpdates: {
-              entry: [log((ctx) => `[${ctx.id}] sending updates`), "sendUpdates"],
+              entry: [mlog("sending updates"), "sendUpdates"],
               always: { target: "waitForUpdate" },
             },
             waitForUpdate: {
               after: {
                 UPDATE_PERIOD: {
-                  actions: log((ctx) => `[${ctx.id}] update period`),
+                  actions: mlog("update period"),
                   target: "sendUpdates",
                 },
               },
@@ -119,9 +119,9 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
                 appendResponse: {
                   actions: [
                     "registerAppendResponse",
-                    log(
+                    mlog(
                       (ctx, evt) =>
-                        `[${ctx.id}] append response ${JSON.stringify(evt)} -> ${JSON.stringify(ctx.syncState)}`,
+                        `append response ${JSON.stringify(evt)} -> ${JSON.stringify(ctx.syncState)}`,
                     ),
                   ],
                 },
@@ -135,10 +135,10 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
           {
             target: "follower.gotMessage",
             cond: "voteGranted",
-            actions: ["termCatchup", "replyVoteGranted", log((ctx) => `[${ctx.id}] vote granted`)],
+            actions: ["termCatchup", "replyVoteGranted", mlog("vote granted")],
           },
           {
-            actions: ["replyVoteNotGranted", log((ctx) => `[${ctx.id}] vote not granted`)],
+            actions: ["replyVoteNotGranted", mlog("vote not granted")],
           },
         ],
         appendRequest: [
@@ -146,14 +146,14 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
             target: "follower.gotMessage",
             cond: "appendOk",
             actions: [
-              log((ctx, evt) => `[${ctx.id}] ok append request ${JSON.stringify(evt)}`),
+              mlog((_ctx, evt) => `ok append request ${JSON.stringify(evt)}`),
               "termCatchup",
               "applyAppend",
               "replyAppendOk",
             ],
           },
           {
-            actions: [log((ctx, evt) => `<<<< [${ctx.id}] append request ${JSON.stringify(evt)}`), "replyAppendNotOk"],
+            actions: [mlog((_ctx, evt) => `append request ${JSON.stringify(evt)}`), "replyAppendNotOk"],
           },
         ],
       },
@@ -368,4 +368,8 @@ function applyLog<A>(log: ILogEntry<A>[], evt: IAppendRequest<A>): ILogEntry<A>[
   newLog.splice(prevLogI);
   newLog.push(...evt.entries);
   return newLog;
+}
+
+function mlog<TContext extends { id: string }, TEvent extends EventObject>(expr: string | LogExpr<TContext, TEvent>): LogAction<TContext, TEvent> {
+  return log((ctx, evt, meta) => `${Date.now()} [${ctx.id}] ${typeof expr === "string" ? expr : expr(ctx, evt, meta)}`);
 }

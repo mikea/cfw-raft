@@ -17,10 +17,6 @@ export const CreateMemberActor = <S, A extends object>(staticConfig: IClusterSta
       const interpreter = interpret(httpMachine.withContext({ handler: member }));
       interpreter.start();
 
-      interpreter.onEvent((event) => {
-        console.error(`[${state.id}] received`, JSON.stringify(event));
-      });
-
       this.fetch = async (request) => {
         const response = barrier<Response>();
         const body = await request.json<EventObject>();
