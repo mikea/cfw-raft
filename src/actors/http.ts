@@ -1,5 +1,4 @@
 import { EventObject, createMachine, ActorRef, send, StateMachine, assign, spawn } from "xstate";
-import { log } from "xstate/lib/actions";
 
 export type HttpRequest = { type: "request"; body: EventObject; callback: (response: Response) => void };
 

@@ -46,11 +46,25 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
       id: "member",
       initial: "follower",
       states: {
-        follower: {},
+        follower: {
+          initial: "waitForMessage",
+
+          states: {
+            waitForMessage: {
+              after: {
+                ELECTION_DELAY: { target: "#member.candidate" },
+              },
+            },
+            gotMessage: {
+              always: { target: "waitForMessage" },
+            },
+          },
+        },
         candidate: {
           initial: "waitRandom",
           states: {
             waitRandom: {
+              entry: [log((ctx) => `[${ctx.id}] election timeout`)],
               after: {
                 RANDOM_DELAY: { target: "startVoting" },
               },
@@ -70,6 +84,9 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
               on: {
                 voteResponse: { actions: "countVote", target: "checkVotes" },
               },
+              after: {
+                ELECTION_DELAY: { target: "#member.candidate" },
+              },
             },
             checkVotes: {
               entry: [log((ctx) => `[${ctx.id}] have ${ctx.votesCollected} votes`)],
@@ -84,7 +101,7 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
           initial: "init",
           states: {
             init: {
-              entry: ["initLeader", log((ctx) => `[${ctx.id}] I am leader`)],
+              entry: ["initLeader", log((ctx) => `[${ctx.id}] I am the leader`)],
               always: { target: "sendUpdates" },
             },
             sendUpdates: {
@@ -94,7 +111,7 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
             waitForUpdate: {
               after: {
                 UPDATE_PERIOD: {
-                  actions: log((ctx) => `&&&&&&&& [${ctx.id}] update period`),
+                  actions: log((ctx) => `[${ctx.id}] update period`),
                   target: "sendUpdates",
                 },
               },
@@ -104,9 +121,7 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
                     "registerAppendResponse",
                     log(
                       (ctx, evt) =>
-                        `@@@@@@@@@@@ [${ctx.id}] append response ${JSON.stringify(evt)} -> ${JSON.stringify(
-                          ctx.syncState,
-                        )}`,
+                        `[${ctx.id}] append response ${JSON.stringify(evt)} -> ${JSON.stringify(ctx.syncState)}`,
                     ),
                   ],
                 },
@@ -118,7 +133,7 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
       on: {
         voteRequest: [
           {
-            target: "follower",
+            target: "follower.gotMessage",
             cond: "voteGranted",
             actions: ["termCatchup", "replyVoteGranted", log((ctx) => `[${ctx.id}] vote granted`)],
           },
@@ -128,7 +143,7 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
         ],
         appendRequest: [
           {
-            target: "follower",
+            target: "follower.gotMessage",
             cond: "appendOk",
             actions: [
               log((ctx, evt) => `[${ctx.id}] ok append request ${JSON.stringify(evt)}`),
@@ -141,12 +156,6 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
             actions: [log((ctx, evt) => `<<<< [${ctx.id}] append request ${JSON.stringify(evt)}`), "replyAppendNotOk"],
           },
         ],
-      },
-      after: {
-        ELECTION_DELAY: {
-          actions: log((ctx) => `$$$$$$$$$$$$$$$$$$$$$$ [${ctx.id}] election timeout`),
-          target: "candidate",
-        },
       },
     },
     {
