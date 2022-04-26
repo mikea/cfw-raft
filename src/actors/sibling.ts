@@ -1,5 +1,5 @@
 import { ActorRef, assign, createMachine, spawn } from "xstate";
-import { log, send } from "xstate/lib/actions";
+import { send } from "xstate/lib/actions";
 import { MemberRequest } from "../messages";
 
 type SiblingContext = {

@@ -15,7 +15,7 @@ export type SupervisorContext<S, A> = {
 
   staticConfig: IClusterStaticConfig<S, A>;
   member?: ActorRef<MemberEvent<A>>;
-  siblings?: Array<{ id: string; ref: ActorRef<any> }>;
+  siblings?: Array<{ id: string; ref: ActorRef<MemberRequest<A>> }>;
   config?: IMemberConfig;
   state?: IMemberState<S, A>;
   lastRequest?: ActorRef<any>;

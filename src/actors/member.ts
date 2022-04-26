@@ -17,7 +17,7 @@ export interface MemberContext<S, A> {
   env: Env;
   id: string;
   storage: DurableObjectStorage;
-  siblings: Array<{ id: string; ref: ActorRef<MemberEvent<A>> }>;
+  siblings: Array<{ id: string; ref: ActorRef<MemberRequest<A>> }>;
 
   // configuration
   staticConfig: IClusterStaticConfig<S, A>;
