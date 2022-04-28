@@ -1,12 +1,15 @@
-import { CreateClusterActor } from "../cluster";
+import { clientAppendEndpoint, createClusterActor } from "../objects/cluster";
 import { IClusterStaticConfig, IStateMachine } from "../model";
-import { CreateMemberActor } from "../member";
+import { createMemberActor } from "../objects/member";
+import * as d from "@mikea/cfw-utils/decoder";
 
 interface State {
   count: number;
 }
 
-type Action = { type: "inc" };
+const actions = d.union([d.struct({ type: d.literal("inc") }), d.struct({ type: d.literal("dec") })]);
+
+type Action = d.TypeOf<typeof actions>;
 
 const stateMachine: IStateMachine<State, Action> = {
   initial: { count: 0 },
@@ -14,15 +17,20 @@ const stateMachine: IStateMachine<State, Action> = {
     switch (action.type) {
       case "inc":
         return { ...state, count: state.count + 1 };
+      case "dec":
+        return { ...state, count: state.count - 1 };
     }
   },
 };
 
 const staticConfig: IClusterStaticConfig<State, Action> = {
   stateMachine,
+  actions,
   memberActor: "counterMember",
   clusterActor: "counterCluster",
 };
 
-export const CounterMember = CreateMemberActor(staticConfig);
-export const CounterCluster = CreateClusterActor(staticConfig);
+export const CounterMember = createMemberActor(staticConfig);
+export const CounterCluster = createClusterActor(staticConfig);
+
+export const CounterClientAppend = clientAppendEndpoint(staticConfig);

@@ -1,4 +1,5 @@
 import { endpoint } from "@mikea/cfw-utils/endpoint";
+import { IClientAppendRequest } from "./api";
 import { ILogEntry, IMemberConfig } from "./model";
 
 interface IMessageBase {
@@ -42,12 +43,17 @@ export type IAppendResponse = {
       }
   );
 
-export type MemberRequest<A> = IVoteRequest | IAppendRequest<A>;
+export type IClientAppendResponse = { type: "clientAppendResponse" } & (
+  | { success: false; reason: "not_a_leader"; leader: string | undefined }
+  | { success: true }
+);
+
+export type MemberRequest<A> = IVoteRequest | IAppendRequest<A> | IClientAppendRequest<A>;
 export type MemberResponse = IVoteResponse | IAppendResponse;
 
 export type StartRequest = { type: "startRequest"; config: IMemberConfig };
 export type StartResponse = { type: "startResponse"; success: boolean };
 
-export const Event = endpoint<StartRequest, StartResponse>({
+export const Start = endpoint<StartRequest, StartResponse>({
   path: "/event",
 });

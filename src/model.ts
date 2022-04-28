@@ -1,12 +1,7 @@
-import * as d from "@mikea/cfw-utils/decoder";
+import { Decoder } from "@mikea/cfw-utils/decoder";
+import { IPartialClusterConfig } from "./api";
 import { Env } from "./env";
 
-export const partialClusterConfig = d.partial({
-  members: d.number,
-  electionDelayMs: d.number,
-  updatePeriod: d.number,
-});
-export type IPartialClusterConfig = d.TypeOf<typeof partialClusterConfig>;
 export type IClusterConfig = Required<IPartialClusterConfig>;
 
 export interface IClusterState {
@@ -22,6 +17,7 @@ export interface IClusterStaticConfig<S, A> {
   stateMachine: IStateMachine<S, A>;
   memberActor: keyof Env;
   clusterActor: keyof Env;
+  actions: Decoder<A>;
 }
 
 export interface IMemberConfig {
@@ -38,6 +34,9 @@ export interface ILogEntry<A> {
 
 export interface IMemberState<S, A> {
   currentTerm: number;
+
+  // persistent to prevent double-voting
+  votedFor?: string;
 
   log: Array<ILogEntry<A>>;
   state: S;

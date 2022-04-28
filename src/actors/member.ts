@@ -4,13 +4,13 @@ import { Env } from "../env";
 import {
   IAppendRequest,
   IAppendResponse,
+  IClientAppendResponse,
   IVoteRequest,
   IVoteResponse,
   MemberRequest,
   MemberResponse,
 } from "../messages";
 import { IClusterStaticConfig, ILogEntry, IMemberConfig, IMemberState, ISyncState } from "../model";
-import { newRandom32 } from "@mikea/cfw-utils/random";
 
 export interface MemberContext<S, A> {
   // environment
@@ -28,15 +28,14 @@ export interface MemberContext<S, A> {
   state: IMemberState<S, A>;
 
   // volatile state
-  votedFor?: string;
+  lastLeaderId?: string;
   votesCollected: number;
   commitIndex: number;
   lastApplied: number;
+
   // only on leader
   syncState: Record<string, ISyncState>;
 }
-
-const random = newRandom32(Date.now());
 
 export type MemberEvent<A> = (MemberRequest<A> & { replyTo: string }) | MemberResponse;
 
@@ -59,18 +58,21 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
               always: { target: "waitForMessage" },
             },
           },
+
+          on: {
+            clientAppend: {
+              actions: [
+                mlog((ctx, evt) => `received client append ${JSON.stringify(evt)}`),
+                "replyClientAppendNotALeader",
+              ],
+            },
+          },
         },
         candidate: {
-          initial: "waitRandom",
+          initial: "startVoting",
           states: {
-            waitRandom: {
-              entry: [mlog("election timeout")],
-              after: {
-                RANDOM_DELAY: { target: "startVoting" },
-              },
-            },
             startVoting: {
-              entry: [mlog("start voting"), "startVoting"],
+              entry: [mlog("election timeout, start voting"), "startVoting"],
               always: { target: "putState" },
             },
             putState: {
@@ -93,6 +95,15 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
               always: [
                 { target: "#member.leader", cond: "haveMajorityVotes" },
                 { target: "#member.candidate.waitForVote" },
+              ],
+            },
+          },
+
+          on: {
+            clientAppend: {
+              actions: [
+                mlog((ctx, evt) => `received client append ${JSON.stringify(evt)}`),
+                "replyClientAppendNotALeader",
               ],
             },
           },
@@ -119,13 +130,20 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
                 appendResponse: {
                   actions: [
                     "registerAppendResponse",
-                    mlog(
-                      (ctx, evt) =>
-                        `append response ${JSON.stringify(evt)} -> ${JSON.stringify(ctx.syncState)}`,
-                    ),
+                    mlog((ctx, evt) => `append response ${JSON.stringify(evt)} -> ${JSON.stringify(ctx.syncState)}`),
                   ],
                 },
               },
+            },
+          },
+
+          on: {
+            clientAppend: {
+              actions: [
+                mlog((ctx, evt) => `processing client append ${JSON.stringify(evt)}`),
+                "processClientAppend",
+                "replyClientAppendOk",
+              ],
             },
           },
         },
@@ -161,7 +179,6 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
     {
       delays: {
         ELECTION_DELAY: (ctx) => ctx.config?.electionDelayMs,
-        RANDOM_DELAY: (ctx) => random.randU32() % ctx.config?.electionDelayMs,
         UPDATE_PERIOD: (ctx) => ctx.config?.updatePeriodMs,
       },
       actions: {
@@ -169,8 +186,8 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
           state: (ctx) => ({
             ...ctx.state!,
             currentTerm: (ctx.state?.currentTerm ?? 0) + 1,
+            votedFor: ctx.id,
           }),
-          votedFor: (ctx) => ctx.id,
           votesCollected: (_ctx) => 0,
         }),
         sendVoteRequests: pure((ctx) =>
@@ -182,12 +199,24 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
           ),
         ),
         termCatchup: assign({
-          state: (ctx, event) => ({
-            ...ctx.state!,
-            currentTerm: event.srcTerm,
-            votedFor: event.src,
-            syncState: {},
-          }),
+          state: (ctx, event) => {
+            // todo: more type safety
+            if (event.type !== "voteRequest" && event.type !== "appendRequest") {
+              throw new Error(`Wrong event type: ${event.type}`);
+            }
+            return {
+              ...ctx.state!,
+              currentTerm: event.srcTerm,
+              syncState: {},
+            };
+          },
+          lastLeaderId: (ctx, evt) => {
+            // todo: more type safety
+            if (evt.type !== "voteRequest" && evt.type !== "appendRequest") {
+              throw new Error(`Wrong evt type: ${evt.type}`);
+            }
+            return evt.src;
+          },
         }),
         replyVoteGranted: send(
           (ctx) =>
@@ -228,6 +257,7 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
             }
             return syncState;
           },
+          lastLeaderId: (ctx) => ctx.id,
         }),
         sendUpdates: pure((ctx) =>
           ctx.siblings.map((sibling) =>
@@ -248,7 +278,13 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
           { to: (_ctx, _event, meta) => meta._event.origin! },
         ),
         applyAppend: assign({
-          state: (ctx, evt) => ({ ...ctx.state, log: applyLog(ctx.state.log, evt as IAppendRequest<any>) }),
+          state: (ctx, evt) => {
+            // todo: more type safety
+            if (evt.type !== "appendRequest") {
+              throw new Error(`Wrong event type: ${evt.type}`);
+            }
+            return { ...ctx.state, log: applyLog(ctx.state.log, evt) };
+          },
           commitIndex: (ctx, evt) => (evt as IAppendRequest<any>).leaderCommit,
         }),
         replyAppendOk: send(
@@ -262,6 +298,8 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
             } as IAppendResponse),
           { to: (_ctx, _event, meta) => meta._event.origin! },
         ),
+        // todo: failure case
+        // todo: commit
         registerAppendResponse: assign({
           syncState: (ctx, evt) =>
             evt.type === "appendResponse" && evt.success
@@ -274,25 +312,74 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
                 }
               : ctx.syncState,
         }),
+        replyClientAppendNotALeader: send(
+          (ctx) => {
+            const response: IClientAppendResponse = {
+              type: "clientAppendResponse",
+              success: false,
+              reason: "not_a_leader",
+              leader: ctx.lastLeaderId,
+            };
+            return response;
+          },
+          { to: (_ctx, _event, meta) => meta._event.origin! },
+        ),
+        processClientAppend: assign({
+          state: (ctx, evt) => {
+            // todo: more type safety
+            if (evt.type !== "clientAppend") {
+              throw new Error(`Wrong event type: ${evt.type}`);
+            }
+            // todo
+            if (evt.consistency !== "no_wait") {
+              throw new Error(`Unsupported append consitency: ${evt.consistency}`);
+            }
+
+            const log = [...ctx.state.log];
+            let nextIndex = (last(log)?.index ?? -1) + 1;
+            evt.entries.forEach((a) => {
+              log.push({
+                action: a,
+                term: ctx.state.currentTerm,
+                index: nextIndex,
+              });
+              nextIndex += 1;
+            });
+
+            return { ...ctx.state, log };
+          },
+        }),
+        replyClientAppendOk: send(
+          () => {
+            const response: IClientAppendResponse = {
+              type: "clientAppendResponse",
+              success: true,
+            };
+            return response;
+          },
+          { to: (_ctx, _event, meta) => meta._event.origin! },
+        ),
       },
 
       guards: {
         voteGranted: (ctx, event) => {
           if (event.type !== "voteRequest") return false;
-
           const state = ctx.state;
+          if (event.srcTerm < state.currentTerm) return false;
+
           const lastLogEntry = last(state.log);
           const lastLogTerm = lastLogEntry ? lastLogEntry.term : -1;
           const lastLogIndex = lastLogEntry ? lastLogEntry.index : -1;
           const logOk =
             event.lastLogTerm > lastLogTerm ||
             (event.lastLogTerm === lastLogTerm && event.lastLogIndex >= lastLogIndex);
-          const voteGranted = logOk && (!ctx.votedFor || ctx.votedFor === event.src);
+          const voteGranted = logOk && (!ctx.state.votedFor || state.currentTerm < event.srcTerm);
+          // todo: check current term
           return voteGranted;
         },
 
         haveMajorityVotes: (ctx) => {
-          return ctx.votesCollected > ctx.siblings.length / 2;
+          return ctx.votesCollected >= ctx.siblings.length / 2;
         },
 
         appendOk: (ctx, event) => {
@@ -314,7 +401,6 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
       },
 
       services: {
-        putConfig: (context) => context.storage.put("config", context.config),
         putState: (context) => context.storage.put("state", context.state),
       },
     },
@@ -370,6 +456,8 @@ function applyLog<A>(log: ILogEntry<A>[], evt: IAppendRequest<A>): ILogEntry<A>[
   return newLog;
 }
 
-function mlog<TContext extends { id: string }, TEvent extends EventObject>(expr: string | LogExpr<TContext, TEvent>): LogAction<TContext, TEvent> {
+function mlog<TContext extends { id: string }, TEvent extends EventObject>(
+  expr: string | LogExpr<TContext, TEvent>,
+): LogAction<TContext, TEvent> {
   return log((ctx, evt, meta) => `${Date.now()} [${ctx.id}] ${typeof expr === "string" ? expr : expr(ctx, evt, meta)}`);
 }

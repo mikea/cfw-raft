@@ -1,11 +1,11 @@
-import { Env } from "./env";
-import { IClusterStaticConfig } from "./model";
+import { Env } from "../env";
+import { IClusterStaticConfig } from "../model";
 import { EventObject, interpret } from "xstate";
-import { barrier } from "./promises";
-import { httpMachine } from "./actors/http";
-import { createMemberSupervisor } from "./actors/memberSupervisor";
+import { barrier } from "../promises";
+import { httpMachine } from "../actors/http";
+import { createMemberSupervisor } from "../actors/memberSupervisor";
 
-export const CreateMemberActor = <S, A extends object>(staticConfig: IClusterStaticConfig<S, A>) => {
+export const createMemberActor = <S, A>(staticConfig: IClusterStaticConfig<S, A>) => {
   return class {
     public readonly fetch: (request: Request) => Promise<Response>;
     constructor(state: DurableObjectState, env: Env) {

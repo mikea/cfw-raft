@@ -121,8 +121,7 @@ export function createMemberSupervisor<S, A>(initialContext: SupervisorContext<S
           entry: send({ type: "startResponse", success: true }, { to: (ctx) => ctx.startOrigin! }),
 
           on: {
-            voteRequest: { actions: "forwardToMember" },
-            appendRequest: { actions: "forwardToMember" },
+            "*": { actions: "forwardToMember" },
           },
         },
       },
