@@ -21,9 +21,10 @@ jobs:
       - run: npm ci
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - run: npm run build --if-present
+      - run: npm run typecheck
+      - run: npm run build
       # - run: npm test
-      - run: npm run lint
+      # - run: npm run lint
       # - name: npm publish
       #   run: |
       #     # npm login --registry=https://npm.pkg.github.com

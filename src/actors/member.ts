@@ -14,7 +14,6 @@ import { IClusterStaticConfig, ILogEntry, IMemberConfig, IMemberState, ISyncStat
 
 export interface MemberContext<S, A> {
   // environment
-  env: Env;
   id: string;
   storage: DurableObjectStorage;
   siblings: Array<{ id: string; ref: ActorRef<MemberRequest<A>> }>;

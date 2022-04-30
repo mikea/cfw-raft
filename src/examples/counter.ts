@@ -23,14 +23,14 @@ const stateMachine: IStateMachine<State, Action> = {
   },
 };
 
-const staticConfig: IClusterStaticConfig<State, Action> = {
+export const counterStaticConfig: IClusterStaticConfig<State, Action> = {
   stateMachine,
   actions,
   memberActor: "counterMember",
   clusterActor: "counterCluster",
 };
 
-export const CounterMember = createMemberActor(staticConfig);
-export const CounterCluster = createClusterActor(staticConfig);
+export const CounterMember = createMemberActor(counterStaticConfig);
+export const CounterCluster = createClusterActor(counterStaticConfig);
 
-export const CounterClientAppend = clientAppendEndpoint(staticConfig);
+export const CounterClientAppend = clientAppendEndpoint(counterStaticConfig);

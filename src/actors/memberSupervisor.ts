@@ -80,13 +80,13 @@ export function createMemberSupervisor<S, A>(initialContext: SupervisorContext<S
         startSiblings: {
           entry: assign({
             siblings: (ctx) =>
-              ctx.config!.others.map((memberId) => ({
+              ctx.siblings?.map((sibling) => ({
                 ref: spawn(
                   siblingMachine.withContext({
-                    stub: getFromString(ctx.env[ctx.staticConfig.memberActor], memberId),
+                    stub: getFromString(ctx.env[ctx.staticConfig.memberActor], sibling.id),
                   }),
                 ),
-                id: memberId,
+                id: sibling.id,
               })),
           }),
           always: {
@@ -101,7 +101,6 @@ export function createMemberSupervisor<S, A>(initialContext: SupervisorContext<S
                   id: ctx.doState.id.toString(),
                   storage: ctx.doState.storage,
                   staticConfig: ctx.staticConfig,
-                  env: ctx.env,
                   config: ctx.config!,
                   siblings: ctx.siblings!,
                   state: ctx.state!,

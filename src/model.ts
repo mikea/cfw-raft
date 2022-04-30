@@ -21,7 +21,6 @@ export interface IClusterStaticConfig<S, A> {
 }
 
 export interface IMemberConfig {
-  others: string[];
   electionDelayMs: number;
   updatePeriodMs: number;
 }

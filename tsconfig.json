@@ -1,6 +1,7 @@
 {
   "compilerOptions": {
     "types": ["@cloudflare/workers-types", "mocha"],
+    "module": "ESNext",
     "target": "esnext",
     "lib": ["esnext"],
     "alwaysStrict": true,
@@ -13,5 +14,8 @@
     "composite": true,
     "rootDir": "src"
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts"],
+  "ts-node": {
+    "esm": true
+  }
 }

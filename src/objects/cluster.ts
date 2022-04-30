@@ -54,7 +54,6 @@ export const createClusterActor = <S, A extends object>(staticConfig: IClusterSt
               return call(memberActor.get(id), Start, {
                 type: "startRequest",
                 config: {
-                  others,
                   electionDelayMs: config.electionDelayMs + (random.randU32() % config.updatePeriod),
                   updatePeriodMs: config.updatePeriod,
                 },
