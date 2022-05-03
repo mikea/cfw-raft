@@ -1,7 +1,7 @@
 import { assert } from "chai";
-import { createMemberMachine } from "./member";
+import { createMemberMachine } from "./member.js";
 import { mock, stub } from "sinon";
-import { counterStaticConfig } from "../examples/counter";
+import { counterStaticConfig } from "../examples/counter.js";
 
 class TestDurableObjectStorage implements DurableObjectStorage {
   get<T = unknown>(key: string, options?: DurableObjectGetOptions): Promise<T | undefined>;

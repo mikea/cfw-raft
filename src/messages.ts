@@ -1,4 +1,4 @@
-import { endpoint } from "@mikea/cfw-utils/endpoint";
+import { endpoint } from "@mikea/cfw-utils";
 import { IClientAppendRequest } from "./api";
 import { ILogEntry, IMemberConfig } from "./model";
 

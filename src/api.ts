@@ -1,4 +1,4 @@
-import * as d from "@mikea/cfw-utils/decoder";
+import { d } from "@mikea/cfw-utils";
 
 export const partialClusterConfig = d.partial({
   members: d.number,

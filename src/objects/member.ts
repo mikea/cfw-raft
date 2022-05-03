@@ -1,9 +1,9 @@
-import { Env } from "../env";
-import { IClusterStaticConfig } from "../model";
+import { Env } from "../env.js";
+import { IClusterStaticConfig } from "../model.js";
 import { EventObject, interpret } from "xstate";
-import { barrier } from "../promises";
-import { httpMachine } from "../actors/http";
-import { createMemberSupervisor } from "../actors/memberSupervisor";
+import { barrier } from "../promises.js";
+import { httpMachine } from "../actors/http.js";
+import { createMemberSupervisor } from "../actors/memberSupervisor.js";
 
 export const createMemberActor = <S, A>(staticConfig: IClusterStaticConfig<S, A>) => {
   return class {

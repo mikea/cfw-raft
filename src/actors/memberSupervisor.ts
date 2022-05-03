@@ -1,11 +1,11 @@
-import { getFromString } from "@mikea/cfw-utils/storage";
+import { getFromString } from "@mikea/cfw-utils";
 import { ActorRef, assign, createMachine, EventObject, spawn } from "xstate";
-import { log, send } from "xstate/lib/actions";
-import { Env } from "../env";
-import { MemberRequest, StartRequest } from "../messages";
-import { IClusterStaticConfig, IMemberConfig, IMemberState } from "../model";
-import { createMemberMachine, MemberEvent } from "./member";
-import { siblingMachine } from "./sibling";
+import { log, send } from "xstate/lib/actions.js";
+import { Env } from "../env.js";
+import { MemberRequest, StartRequest } from "../messages.js";
+import { IClusterStaticConfig, IMemberConfig, IMemberState } from "../model.js";
+import { createMemberMachine, MemberEvent } from "./member.js";
+import { siblingMachine } from "./sibling.js";
 
 export type SupervisorContext<S, A> = {
   env: Env;

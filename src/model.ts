@@ -1,4 +1,4 @@
-import { Decoder } from "@mikea/cfw-utils/decoder";
+import { d } from "@mikea/cfw-utils";
 import { IPartialClusterConfig } from "./api";
 import { Env } from "./env";
 
@@ -17,7 +17,7 @@ export interface IClusterStaticConfig<S, A> {
   stateMachine: IStateMachine<S, A>;
   memberActor: keyof Env;
   clusterActor: keyof Env;
-  actions: Decoder<A>;
+  actions: d.Decoder<A>;
 }
 
 export interface IMemberConfig {

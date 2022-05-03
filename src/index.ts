@@ -1,14 +1,14 @@
 export { CounterCluster, CounterMember } from "./examples/counter";
 
-import { endpoint } from "@mikea/cfw-utils/endpoint";
+import { endpoint } from "@mikea/cfw-utils";
 import { StartCluster } from "./objects/cluster";
-import * as d from "@mikea/cfw-utils/decoder";
-import { Handler, Server } from "@mikea/cfw-utils/server";
+import { d } from "@mikea/cfw-utils";
+import { Handler, Server } from "@mikea/cfw-utils";
 import { Env } from "./env";
-import { call } from "@mikea/cfw-utils/call";
+import { call } from "@mikea/cfw-utils";
 import { partialClusterConfig } from "./api";
 import { CounterClientAppend } from "./examples/counter";
-import { getFromString } from "@mikea/cfw-utils/storage";
+import { getFromString } from "@mikea/cfw-utils";
 
 const startResponse = d.struct({
   clusterId: d.string,

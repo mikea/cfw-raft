@@ -1,7 +1,7 @@
-import { clientAppendEndpoint, createClusterActor } from "../objects/cluster";
-import { IClusterStaticConfig, IStateMachine } from "../model";
-import { createMemberActor } from "../objects/member";
-import * as d from "@mikea/cfw-utils/decoder";
+import { clientAppendEndpoint, createClusterActor } from "../objects/cluster.js";
+import { IClusterStaticConfig, IStateMachine } from "../model.js";
+import { createMemberActor } from "../objects/member.js";
+import * as d from "@mikea/cfw-utils/dist/decoder.js";
 
 interface State {
   count: number;

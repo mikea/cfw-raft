@@ -1,6 +1,6 @@
 import { ActorRef, assign, createMachine, spawn } from "xstate";
-import { send } from "xstate/lib/actions";
-import { MemberRequest } from "../messages";
+import { send } from "xstate/lib/actions.js";
+import { MemberRequest } from "../messages.js";
 
 type SiblingContext = {
   stub: DurableObjectStub;

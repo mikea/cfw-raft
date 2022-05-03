@@ -6,6 +6,7 @@
     "lib": ["esnext"],
     "alwaysStrict": true,
     "strict": true,
+    "noImplicitAny": true,
     "noEmitOnError": true,
     "moduleResolution": "node",
     "outDir": "build",

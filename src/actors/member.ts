@@ -1,6 +1,5 @@
 import { ActorRef, assign, createMachine, EventObject, LogAction, LogExpr } from "xstate";
-import { log, pure, send, sendTo } from "xstate/lib/actions";
-import { Env } from "../env";
+import { log, pure, send, sendTo } from "xstate/lib/actions.js";
 import {
   IAppendRequest,
   IAppendResponse,
