@@ -2,6 +2,7 @@ import { assert } from "chai";
 import { createMemberMachine } from "./member.js";
 import { mock, stub } from "sinon";
 import { counterStaticConfig } from "../examples/counter.js";
+import { interpret } from "xstate";
 
 class TestDurableObjectStorage implements DurableObjectStorage {
   get<T = unknown>(key: string, options?: DurableObjectGetOptions): Promise<T | undefined>;
@@ -45,28 +46,45 @@ class TestDurableObjectStorage implements DurableObjectStorage {
 
 describe("member actor", () => {
   describe("when a leader", () => {
-    it("works", () => {
-      const machine = createMemberMachine({
-        id: "1",
-        storage: stub(new TestDurableObjectStorage()),
-        siblings: [],
-        staticConfig: counterStaticConfig,
-        config: {
-          electionDelayMs: 100,
-          updatePeriodMs: 100,
-        },
-        state: {
-          currentTerm: 1000,
-          log: [],
-          state: { count: 0 },
-        },
-        votesCollected: 0,
-        commitIndex: -1,
-        lastApplied: -1,
-        syncState: {},
-      });
+    const machine = createMemberMachine({
+      id: "1",
+      storage: stub(new TestDurableObjectStorage()),
+      siblings: [],
+      staticConfig: counterStaticConfig,
+      config: {
+        electionDelayMs: 100,
+        updatePeriodMs: 100,
+      },
+      state: {
+        currentTerm: 1000,
+        log: [],
+        state: { count: 0 },
+      },
+      votesCollected: 0,
+      commitIndex: -1,
+      lastApplied: -1,
+      syncState: {},
+    });
+    const service = interpret(machine);
 
-      assert(false, "test");
+    beforeEach(() => {
+      service.start("#member.leader");
+    });
+
+    afterEach(() => {
+      service.stop();
+    });
+
+    it("becomes a follower when receives voteRequest with high enough term", () => {
+      service.send({ type: "voteRequest", src: "5", lastLogIndex: 10, lastLogTerm: 1001, srcTerm: 1001, replyTo: "na" });
+      
+      assert.deepEqual(service.state.value, { follower: "waitForMessage" });
+    });
+
+    it("ignores voteRequest with lower term", () => {
+      service.send({ type: "voteRequest", src: "5", lastLogIndex: 10, lastLogTerm: 999, srcTerm: 999, replyTo: "na" });
+      
+      assert.deepEqual(service.state.value, { leader: "waitForUpdate" });
     });
   });
 });
