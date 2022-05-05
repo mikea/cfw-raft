@@ -130,13 +130,13 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
           on: {
             appendResponse: {
               actions: [
-                mlog((ctx, evt) => `got append response ${JSON.stringify(evt)} -> ${JSON.stringify(ctx.syncState)}`),
-                "registerAppendResponse",
+                mlog((_ctx, evt) => `got append response ${JSON.stringify(evt)}`),
+                "processAppendResponse",
               ],
             },
             clientAppend: {
               actions: [
-                mlog((ctx, evt) => `processing client append ${JSON.stringify(evt)}`),
+                mlog((_ctx, evt) => `processing client append ${JSON.stringify(evt)}`),
                 "processClientAppend",
                 "replyClientAppendOk",
               ],
@@ -297,9 +297,10 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
         ),
         // todo: failure case
         // todo: commit
-        registerAppendResponse: assign({
+        processAppendResponse: assign({
           syncState: (ctx, evt) => {
             if (evt.type !== "appendResponse") return ctx.syncState;
+            if (evt.srcTerm !== ctx.state.currentTerm) return ctx.syncState;
 
             return evt.success
               ? {

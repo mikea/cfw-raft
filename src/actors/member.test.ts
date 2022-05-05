@@ -36,12 +36,12 @@ describe("member actor", () => {
       },
     });
 
-    const service = interpret(machine);
+    const service = interpret(machine, { logger: () => null });
 
     before(() => {
-      service.onTransition((state, event) => {
-        console.error("onTransition: ", state.value, event);
-      });
+      // service.onTransition((state, event) => {
+      //   console.error("onTransition: ", JSON.stringify(state.value), JSON.stringify(event));
+      // });
     });
 
     beforeEach(() => {
@@ -71,11 +71,25 @@ describe("member actor", () => {
       assert.deepEqual(service.state.value, { leader: "waitForUpdate" });
     });
 
-    it.only("on failed append response updates sync state", () => {
+    it("on successful append response updates sync state", () => {
+      assert.deepEqual(service.state.context.syncState["2"], { nextIndex: 20, matchIndex: 10 });
+      service.send({ type: "appendResponse", success: true, src: "2", srcTerm: 1000, matchIndex: 20 });
+
+      assert.deepEqual(service.state.context.syncState["2"], { nextIndex: 21, matchIndex: 20 });
+    });
+
+    it("on failed append response updates sync state", () => {
       assert.deepEqual(service.state.context.syncState["2"], { nextIndex: 20, matchIndex: 10 });
       service.send({ type: "appendResponse", success: false, src: "2", srcTerm: 1000 });
 
       assert.deepEqual(service.state.context.syncState["2"], { nextIndex: 19, matchIndex: 10 });
+    });
+
+    it("ignores failed append response with wrong term", () => {
+      assert.deepEqual(service.state.context.syncState["2"], { nextIndex: 20, matchIndex: 10 });
+      service.send({ type: "appendResponse", success: false, src: "2", srcTerm: 999 });
+
+      assert.deepEqual(service.state.context.syncState["2"], { nextIndex: 20, matchIndex: 10 });
     });
   });
 });
