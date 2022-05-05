@@ -1,12 +1,12 @@
 import { assert } from "chai";
 import { createMemberMachine } from "./member.js";
-import { mock, stub } from "sinon";
+import { stub } from "sinon";
 import { counterStaticConfig } from "../examples/counter.js";
 import { interpret } from "xstate";
 import { TestDurableObjectStorage } from "./testUtils.js";
 
 describe("member actor", () => {
-  describe("when a leader", () => {
+  describe("leader", () => {
     const machine = createMemberMachine({
       id: "1",
       storage: stub(new TestDurableObjectStorage()),
@@ -72,21 +72,24 @@ describe("member actor", () => {
     });
 
     it("on successful append response updates sync state", () => {
-      assert.deepEqual(service.state.context.syncState["2"], { nextIndex: 20, matchIndex: 10 });
       service.send({ type: "appendResponse", success: true, src: "2", srcTerm: 1000, matchIndex: 20 });
 
       assert.deepEqual(service.state.context.syncState["2"], { nextIndex: 21, matchIndex: 20 });
     });
 
-    it("on failed append response updates sync state", () => {
+    it("ignores successful append response with wrong term", () => {
+      service.send({ type: "appendResponse", success: true, src: "2", srcTerm: 999, matchIndex: 20 });
+
       assert.deepEqual(service.state.context.syncState["2"], { nextIndex: 20, matchIndex: 10 });
+    });
+
+    it("on failed append response updates sync state", () => {
       service.send({ type: "appendResponse", success: false, src: "2", srcTerm: 1000 });
 
       assert.deepEqual(service.state.context.syncState["2"], { nextIndex: 19, matchIndex: 10 });
     });
 
     it("ignores failed append response with wrong term", () => {
-      assert.deepEqual(service.state.context.syncState["2"], { nextIndex: 20, matchIndex: 10 });
       service.send({ type: "appendResponse", success: false, src: "2", srcTerm: 999 });
 
       assert.deepEqual(service.state.context.syncState["2"], { nextIndex: 20, matchIndex: 10 });
