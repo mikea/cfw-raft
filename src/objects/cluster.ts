@@ -7,7 +7,12 @@ import { log } from "../log.js";
 import { liftError } from "../errors.js";
 import { IClusterConfig, IClusterState, IClusterStaticConfig } from "../model.js";
 import { IClientAppendResponse, Start } from "../messages.js";
-import { clientAppendRequestDecoder, IClientAppendRequest, IPartialClusterConfig, partialClusterConfig } from "../api.js";
+import {
+  clientAppendRequestDecoder,
+  IClientAppendRequest,
+  IPartialClusterConfig,
+  partialClusterConfig,
+} from "../api.js";
 import { newRandom32 } from "@mikea/cfw-utils";
 
 const random = newRandom32(Date.now());

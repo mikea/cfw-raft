@@ -107,9 +107,9 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
           },
         },
         leader: {
-          initial: "init",
+          initial: "start",
           states: {
-            init: {
+            start: {
               entry: ["initLeader", mlog("I am the leader")],
               always: { target: "sendUpdates" },
             },
@@ -124,18 +124,16 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
                   target: "sendUpdates",
                 },
               },
-              on: {
-                appendResponse: {
-                  actions: [
-                    "registerAppendResponse",
-                    mlog((ctx, evt) => `append response ${JSON.stringify(evt)} -> ${JSON.stringify(ctx.syncState)}`),
-                  ],
-                },
-              },
             },
           },
 
           on: {
+            appendResponse: {
+              actions: [
+                mlog((ctx, evt) => `got append response ${JSON.stringify(evt)} -> ${JSON.stringify(ctx.syncState)}`),
+                "registerAppendResponse",
+              ],
+            },
             clientAppend: {
               actions: [
                 mlog((ctx, evt) => `processing client append ${JSON.stringify(evt)}`),
@@ -243,6 +241,7 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
         }),
         initLeader: assign({
           syncState: (ctx) => {
+            console.error("!!!! init leader");
             const syncState: Record<string, ISyncState> = {};
             const lastLogEntry = last(ctx.state.log);
             const lastLogIndex = lastLogEntry ? lastLogEntry.index : -1;
@@ -299,8 +298,10 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
         // todo: failure case
         // todo: commit
         registerAppendResponse: assign({
-          syncState: (ctx, evt) =>
-            evt.type === "appendResponse" && evt.success
+          syncState: (ctx, evt) => {
+            if (evt.type !== "appendResponse") return ctx.syncState;
+
+            return evt.success
               ? {
                   ...ctx.syncState,
                   [evt.src]: {
@@ -308,7 +309,14 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
                     nextIndex: evt.matchIndex + 1,
                   },
                 }
-              : ctx.syncState,
+              : {
+                  ...ctx.syncState,
+                  [evt.src]: {
+                    nextIndex: (ctx.syncState[evt.src]?.nextIndex ?? 0) - 1,
+                    matchIndex: ctx.syncState[evt.src]?.matchIndex,
+                  },
+                };
+          },
         }),
         replyClientAppendNotALeader: send(
           (ctx) => {

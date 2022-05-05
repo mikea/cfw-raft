@@ -3,46 +3,7 @@ import { createMemberMachine } from "./member.js";
 import { mock, stub } from "sinon";
 import { counterStaticConfig } from "../examples/counter.js";
 import { interpret } from "xstate";
-
-class TestDurableObjectStorage implements DurableObjectStorage {
-  get<T = unknown>(key: string, options?: DurableObjectGetOptions): Promise<T | undefined>;
-  get<T = unknown>(keys: string[], options?: DurableObjectGetOptions): Promise<Map<string, T>>;
-  get<T = unknown>(_keys: string | string[], _options?: DurableObjectGetOptions): Promise<T | undefined> | Promise<Map<string, T>> {
-    throw new Error("Method not implemented.");
-  }
-  list<T = unknown>(_options?: DurableObjectListOptions): Promise<Map<string, T>> {
-    throw new Error("Method not implemented.");
-  }
-  put<T>(key: string, value: T, options?: DurableObjectPutOptions): Promise<void>;
-  put<T>(entries: Record<string, T>, options?: DurableObjectPutOptions): Promise<void>;
-  put<T>(_keyOrEntries: string | Record<string,T>, _valueOrOptions?: T | DurableObjectPutOptions, _options?: DurableObjectPutOptions): Promise<void> {
-    throw new Error("Method not implemented.");
-  }
-  delete(key: string, options?: DurableObjectPutOptions): Promise<boolean>;
-  delete(keys: string[], options?: DurableObjectPutOptions): Promise<number>;
-  delete(_keys: string | string[], _options?: DurableObjectPutOptions): Promise<boolean> | Promise<number> {
-    throw new Error("Method not implemented.");
-  }
-  
-  deleteAll(_options?: DurableObjectPutOptions): Promise<void> {
-    throw new Error("Method not implemented.");
-  }
-  transaction<T>(_closure: (txn: DurableObjectTransaction) => Promise<T>): Promise<T> {
-    throw new Error("Method not implemented.");
-  }
-  
-  getAlarm(_options?: DurableObjectGetAlarmOptions): Promise<number | null> {
-    throw new Error("Method not implemented.");
-  }
-  
-  setAlarm(_arg2: Date, _options?: DurableObjectSetAlarmOptions): Promise<void> {
-    throw new Error("Method not implemented.");
-  }
-
-  deleteAlarm(_options?: DurableObjectSetAlarmOptions): Promise<void> {
-    throw new Error("Method not implemented.");
-  }
-}
+import { TestDurableObjectStorage } from "./testUtils.js";
 
 describe("member actor", () => {
   describe("when a leader", () => {
@@ -63,9 +24,25 @@ describe("member actor", () => {
       votesCollected: 0,
       commitIndex: -1,
       lastApplied: -1,
-      syncState: {},
+      syncState: {
+        "2": {
+          nextIndex: 20,
+          matchIndex: 10,
+        },
+        "3": {
+          nextIndex: 1,
+          matchIndex: 0,
+        },
+      },
     });
+
     const service = interpret(machine);
+
+    before(() => {
+      service.onTransition((state, event) => {
+        console.error("onTransition: ", state.value, event);
+      });
+    });
 
     beforeEach(() => {
       service.start("#member.leader");
@@ -76,15 +53,29 @@ describe("member actor", () => {
     });
 
     it("becomes a follower when receives voteRequest with high enough term", () => {
-      service.send({ type: "voteRequest", src: "5", lastLogIndex: 10, lastLogTerm: 1001, srcTerm: 1001, replyTo: "na" });
-      
+      service.send({
+        type: "voteRequest",
+        src: "5",
+        lastLogIndex: 10,
+        lastLogTerm: 1001,
+        srcTerm: 1001,
+        replyTo: "na",
+      });
+
       assert.deepEqual(service.state.value, { follower: "waitForMessage" });
     });
 
     it("ignores voteRequest with lower term", () => {
       service.send({ type: "voteRequest", src: "5", lastLogIndex: 10, lastLogTerm: 999, srcTerm: 999, replyTo: "na" });
-      
+
       assert.deepEqual(service.state.value, { leader: "waitForUpdate" });
+    });
+
+    it.only("on failed append response updates sync state", () => {
+      assert.deepEqual(service.state.context.syncState["2"], { nextIndex: 20, matchIndex: 10 });
+      service.send({ type: "appendResponse", success: false, src: "2", srcTerm: 1000 });
+
+      assert.deepEqual(service.state.context.syncState["2"], { nextIndex: 19, matchIndex: 10 });
     });
   });
 });
