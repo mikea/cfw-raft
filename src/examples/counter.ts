@@ -2,6 +2,7 @@ import { clientAppendEndpoint, createClusterActor } from "../objects/cluster.js"
 import { IClusterStaticConfig, IStateMachine } from "../model.js";
 import { createMemberActor } from "../objects/member.js";
 import * as d from "@mikea/cfw-utils/dist/decoder.js";
+import { MemberContext } from "../actors/member.js";
 
 interface State {
   count: number;
@@ -34,3 +35,5 @@ export const CounterMember = createMemberActor(counterStaticConfig);
 export const CounterCluster = createClusterActor(counterStaticConfig);
 
 export const CounterClientAppend = clientAppendEndpoint(counterStaticConfig);
+
+export type CounterContext = MemberContext<State, Action>;

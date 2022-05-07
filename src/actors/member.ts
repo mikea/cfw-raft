@@ -35,7 +35,7 @@ export interface MemberContext<S, A> {
   syncState: Record<string, ISyncState>;
 }
 
-export type MemberEvent<A> = (MemberRequest<A> & { replyTo: string }) | MemberResponse;
+export type MemberEvent<A> = (MemberRequest<A> & { replyTo: string }) | MemberResponse | { type: "test.candidate" | "test.leader" };
 
 export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
   return createMachine<MemberContext<S, A>, MemberEvent<A>>(
@@ -132,6 +132,7 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
               actions: [
                 mlog((_ctx, evt) => `got append response ${JSON.stringify(evt)}`),
                 "processAppendResponse",
+                "advanceCommitIndex",
               ],
             },
             clientAppend: {
@@ -170,6 +171,9 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
             actions: [mlog((_ctx, evt) => `append request ${JSON.stringify(evt)}`), "replyAppendNotOk"],
           },
         ],
+
+        "test.candidate": { target: "candidate" },
+        "test.leader": { target: "leader" },
       },
     },
     {
@@ -241,7 +245,6 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
         }),
         initLeader: assign({
           syncState: (ctx) => {
-            console.error("!!!! init leader");
             const syncState: Record<string, ISyncState> = {};
             const lastLogEntry = last(ctx.state.log);
             const lastLogIndex = lastLogEntry ? lastLogEntry.index : -1;
@@ -319,6 +322,9 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
                 };
           },
         }),
+        advanceCommitIndex: assign({
+          commitIndex: (ctx) => maxCommitIndex(ctx),
+        }),
         replyClientAppendNotALeader: send(
           (ctx) => {
             const response: IClientAppendResponse = {
@@ -381,7 +387,7 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
             event.lastLogTerm > lastLogTerm ||
             (event.lastLogTerm === lastLogTerm && event.lastLogIndex >= lastLogIndex);
           const voteGranted = logOk && (!ctx.state.votedFor || state.currentTerm < event.srcTerm);
-          // todo: check current term
+
           return voteGranted;
         },
 
@@ -434,12 +440,8 @@ function buildAppendRequest<S, A>(ctx: MemberContext<S, A>, memberId: string): I
   const syncState = ctx.syncState[memberId]!;
 
   const prevLogIndex = syncState.nextIndex - 1;
-  const prevLogTerm = prevLogIndex >= 0 ? state.log.find((e) => e.index === prevLogIndex)!.term : -1;
+  const prevLogTerm = state.log.find((e) => e.index === prevLogIndex)?.term ?? -1;
 
-  // const response = await call(getFromString(this.memberActor, memberId), Append, {
-  //   term: state.currentTerm,
-  //   sourceId: this.id,
-  // });
   return {
     type: "appendRequest",
     src: ctx.id,
@@ -467,4 +469,13 @@ function mlog<TContext extends { id: string }, TEvent extends EventObject>(
   expr: string | LogExpr<TContext, TEvent>,
 ): LogAction<TContext, TEvent> {
   return log((ctx, evt, meta) => `${Date.now()} [${ctx.id}] ${typeof expr === "string" ? expr : expr(ctx, evt, meta)}`);
+}
+
+function maxCommitIndex<S, A>(ctx: MemberContext<S, A>) {
+  const matches = ctx.siblings.map((sibling) => ctx.syncState[sibling.id].matchIndex ?? -1);
+  matches.sort();
+  const commitIndex = matches[matches.length / 2];
+
+  // todo [correctess] need to verify that log[commitIndex] == currentTerm.
+  return commitIndex;
 }
