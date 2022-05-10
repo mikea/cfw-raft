@@ -1,13 +1,13 @@
-import { ActorRef, assign, createMachine, spawn } from "xstate";
+import { ActorRef, assign, createMachine, EventObject, spawn } from "xstate";
 import { send } from "xstate/lib/actions.js";
 import { MemberRequest } from "../messages.js";
 
 type SiblingContext = {
   stub: DurableObjectStub;
-  lastRequest?: ActorRef<any>;
+  lastRequest?: ActorRef<EventObject>;
 };
 
-const fetchMachine = createMachine<{ fetcher: Fetcher; msg: MemberRequest<any>; replyTo: string }>(
+const fetchMachine = createMachine<{ fetcher: Fetcher; msg: MemberRequest<unknown>; replyTo: string }>(
   {
     id: "fetch",
     initial: "start",
@@ -18,7 +18,7 @@ const fetchMachine = createMachine<{ fetcher: Fetcher; msg: MemberRequest<any>; 
           src: "fetch",
           onDone: {
             target: "done",
-            actions: send((ctx, evt) => evt.data, { to: (ctx) => ctx.replyTo }),
+            actions: send((_ctx, evt) => evt.data, { to: (ctx) => ctx.replyTo }),
           },
         },
       },
@@ -43,7 +43,7 @@ const fetchMachine = createMachine<{ fetcher: Fetcher; msg: MemberRequest<any>; 
   },
 );
 
-export const siblingMachine = createMachine<SiblingContext, MemberRequest<any>>({
+export const siblingMachine = createMachine<SiblingContext, MemberRequest<unknown>>({
   id: "sibling",
   initial: "start",
   states: {

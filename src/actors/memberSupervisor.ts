@@ -3,8 +3,8 @@ import { ActorRef, assign, createMachine, EventObject, spawn } from "xstate";
 import { log, send } from "xstate/lib/actions.js";
 import { Env } from "../env.js";
 import { MemberRequest, StartRequest } from "../messages.js";
-import { IClusterStaticConfig, IMemberConfig, IMemberState } from "../model.js";
-import { createMemberMachine, MemberEvent } from "./member.js";
+import { IClusterStaticConfig, IMemberConfig, IMemberPersistentState } from "../model.js";
+import { createMemberMachine, MemberMessage } from "./member.js";
 import { siblingMachine } from "./sibling.js";
 
 export type SupervisorContext<S, A> = {
@@ -14,10 +14,10 @@ export type SupervisorContext<S, A> = {
   startOrigin?: string;
 
   staticConfig: IClusterStaticConfig<S, A>;
-  member?: ActorRef<MemberEvent<A>>;
+  member?: ActorRef<MemberMessage<A>>;
   siblings?: Array<{ id: string; ref: ActorRef<MemberRequest<A>> }>;
   config?: IMemberConfig;
-  state?: IMemberState<S, A>;
+  state?: IMemberPersistentState<S, A>;
   lastRequest?: ActorRef<any>;
 };
 
@@ -64,7 +64,11 @@ export function createMemberSupervisor<S, A>(initialContext: SupervisorContext<S
                     commitIndex: -1,
                     lastApplied: -1,
                     syncState: {},
-                    state: ctx.staticConfig.stateMachine.initial,
+                    replicatedState: {
+                      s: ctx.staticConfig.stateMachine.initial,
+                      term: 0,
+                      index: -1,
+                    },
                   }),
                 }),
               ],

@@ -26,7 +26,7 @@ const requestMachine = createMachine<{ request: HttpRequest; ref: ActorRef<any> 
 });
 
 export const httpMachine = createMachine<
-  { ref?: ActorRef<any>; handler: StateMachine<any, any, any>; lastRequest?: ActorRef<any> },
+  { ref?: ActorRef<EventObject>; handler: StateMachine<any, any, any>; lastRequest?: ActorRef<EventObject> },
   HttpRequest
 >({
   id: "http",

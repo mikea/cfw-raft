@@ -9,7 +9,7 @@ import {
   MemberRequest,
   MemberResponse,
 } from "../messages";
-import { IClusterStaticConfig, ILogEntry, IMemberConfig, IMemberState, ISyncState } from "../model";
+import { IClusterStaticConfig, ILogEntry, IMemberConfig, IMemberPersistentState, ISyncState } from "../model";
 
 export interface MemberContext<S, A> {
   // environment
@@ -22,8 +22,7 @@ export interface MemberContext<S, A> {
   config: IMemberConfig;
 
   // persistent state
-  // todo: move log out
-  state: IMemberState<S, A>;
+  state: IMemberPersistentState<S, A>;
 
   // volatile state
   lastLeaderId?: string;
@@ -35,10 +34,13 @@ export interface MemberContext<S, A> {
   syncState: Record<string, ISyncState>;
 }
 
-export type MemberEvent<A> = (MemberRequest<A> & { replyTo: string }) | MemberResponse | { type: "test.candidate" | "test.leader" };
+export type MemberMessage<A> =
+  | (MemberRequest<A> & { replyTo: string })
+  | MemberResponse
+  | { type: "test.candidate" | "test.leader" };
 
 export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
-  return createMachine<MemberContext<S, A>, MemberEvent<A>>(
+  return createMachine<MemberContext<S, A>, MemberMessage<A>>(
     {
       id: "member",
       initial: "follower",
@@ -133,6 +135,7 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
                 mlog((_ctx, evt) => `got append response ${JSON.stringify(evt)}`),
                 "processAppendResponse",
                 "advanceCommitIndex",
+                "applyCommitedEntries",
               ],
             },
             clientAppend: {
@@ -164,8 +167,10 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
               mlog((_ctx, evt) => `ok append request ${JSON.stringify(evt)}`),
               "termCatchup",
               "applyAppend",
+              "applyCommitedEntries",
               "replyAppendOk",
-            ],
+            // todo: persist state
+          ],
           },
           {
             actions: [mlog((_ctx, evt) => `append request ${JSON.stringify(evt)}`), "replyAppendNotOk"],
@@ -184,7 +189,7 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
       actions: {
         startVoting: assign({
           state: (ctx) => ({
-            ...ctx.state!,
+            ...ctx.state,
             currentTerm: (ctx.state?.currentTerm ?? 0) + 1,
             votedFor: ctx.id,
           }),
@@ -193,7 +198,7 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
         sendVoteRequests: pure((ctx) =>
           ctx.siblings.map((sibling) =>
             sendTo(
-              () => sibling.ref as any,
+              () => sibling.ref,
               (ctx) => buildVoteRequest(ctx),
             ),
           ),
@@ -205,7 +210,7 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
               throw new Error(`Wrong event type: ${event.type}`);
             }
             return {
-              ...ctx.state!,
+              ...ctx.state,
               currentTerm: event.srcTerm,
               syncState: {},
             };
@@ -262,7 +267,7 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
         sendUpdates: pure((ctx) =>
           ctx.siblings.map((sibling) =>
             sendTo(
-              () => sibling.ref as any,
+              () => sibling.ref,
               (ctx) => buildAppendRequest(ctx, sibling.id),
             ),
           ),
@@ -324,6 +329,9 @@ export function createMemberMachine<S, A>(initialContext: MemberContext<S, A>) {
         }),
         advanceCommitIndex: assign({
           commitIndex: (ctx) => maxCommitIndex(ctx),
+        }),
+        applyCommitedEntries: assign({
+          state: (ctx) => applyEntries(ctx),
         }),
         replyClientAppendNotALeader: send(
           (ctx) => {
@@ -460,7 +468,7 @@ function last<T>(arr: T[]): T | undefined {
 function applyLog<A>(log: ILogEntry<A>[], evt: IAppendRequest<A>): ILogEntry<A>[] {
   const prevLogI = log.findIndex((e) => e.index == evt.prevLogIndex);
   const newLog = [...log];
-  newLog.splice(prevLogI);
+  newLog.splice(prevLogI + 1);
   newLog.push(...evt.entries);
   return newLog;
 }
@@ -478,4 +486,23 @@ function maxCommitIndex<S, A>(ctx: MemberContext<S, A>) {
 
   // todo [correctess] need to verify that log[commitIndex] == currentTerm.
   return commitIndex;
+}
+
+function applyEntries<S, A>(ctx: MemberContext<S, A>): IMemberPersistentState<S, A> {
+  let replicatedState = ctx.state.replicatedState;
+
+  for (const entry of ctx.state.log) {
+    if (entry.index > replicatedState.index && entry.index <= ctx.commitIndex) {
+      replicatedState = {
+        s: ctx.staticConfig.stateMachine.reduce(replicatedState.s, entry.action),
+        index: entry.index,
+        term: entry.term,
+      };
+    }
+  }
+
+  return {
+    ...ctx.state,
+    replicatedState,
+  };
 }

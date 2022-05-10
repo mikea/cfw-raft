@@ -2,7 +2,7 @@ import { clientAppendEndpoint, createClusterActor } from "../objects/cluster.js"
 import { IClusterStaticConfig, IStateMachine } from "../model.js";
 import { createMemberActor } from "../objects/member.js";
 import * as d from "@mikea/cfw-utils/dist/decoder.js";
-import { MemberContext } from "../actors/member.js";
+import { MemberContext, MemberMessage } from "../actors/member.js";
 
 interface State {
   count: number;
@@ -36,4 +36,6 @@ export const CounterCluster = createClusterActor(counterStaticConfig);
 
 export const CounterClientAppend = clientAppendEndpoint(counterStaticConfig);
 
+// these types help write tests
 export type CounterContext = MemberContext<State, Action>;
+export type CounterMessage = MemberMessage<Action>;
